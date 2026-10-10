@@ -123,8 +123,6 @@ pub struct Stream {
     pub start_time: u64,
     /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
-    /// Optional timestamp before which no tokens are claimable.
-    pub cliff_time: Option<u64>,
     /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,
     /// `true` while the stream is paused; accrual is frozen at `paused_at`. Always set.
