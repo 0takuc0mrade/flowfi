@@ -81,4 +81,10 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// Operation requires an active stream, but the stream is inactive (cancelled or completed).
+    StreamNotActive = 34,
+    /// Operation requires a fully settled stream, but unwithdrawn funds remain.
+    StreamStillActive = 35,
+    /// An amount or timestamp calculation exceeded the range of its type.
+    ArithmeticOverflow = 36,
 }
