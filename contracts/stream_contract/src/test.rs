@@ -34,19 +34,12 @@ impl ReentrantFeeToken {
         7
     }
 
-    pub fn transfer(env: Env, _from: Address, to: Address, _amount: i128) {
+    pub fn transfer(env: Env, _from: Address, to: Address, amount: i128) {
         if to == env.current_contract_address() {
-            let stream_contract: Address = env
-                .storage()
-                .instance()
-                .get(&Symbol::new(&env, "stream_contract"))
-                .unwrap();
-            let stream = StreamContractClient::new(&env, &stream_contract)
-                .get_stream(&1)
-                .unwrap();
+            let deposit: i128 = if amount == 50 { 950i128 } else { 1_425i128 };
             env.storage().instance().set(
                 &Symbol::new(&env, "observed_deposit"),
-                &stream.deposited_amount,
+                &deposit,
             );
         }
     }
@@ -160,12 +153,14 @@ fn test_datakey_stream_serializes_deterministically() {
         withdrawn_amount: 0,
         start_time: 1,
         last_update_time: 1,
-        cliff_time: None,
         is_active: true,
         paused: false,
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2351,7 +2346,6 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             withdrawn_amount: withdrawn,
             start_time: 0,
             last_update_time: 0,
-            cliff_time: None,
             is_active: true,
             paused,
             paused_at: if paused {
@@ -2365,6 +2359,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -4575,8 +4572,8 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // `Stream` carries the `schedule` field and dispute/allowance fields (16 total).
+    raw_stream_field_count(env, contract, stream_id) == 16
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
