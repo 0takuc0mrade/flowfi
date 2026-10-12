@@ -41,7 +41,7 @@ mod property_tests;
 mod test;
 
 use soroban_sdk::{
-    contract, contractimpl, token, vec, Address, BytesN, Env, IntoVal, InvokeError, Symbol, Vec,
+    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, Symbol, Vec,
 };
 
 use errors::StreamError;
@@ -426,6 +426,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
