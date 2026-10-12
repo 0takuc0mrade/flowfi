@@ -35,7 +35,7 @@ impl ReentrantFeeToken {
         7
     }
 
-    pub fn transfer(env: Env, _from: Address, to: Address, amount: i128) {
+    pub fn transfer(env: Env, _from: Address, to: Address, _amount: i128) {
         if to == env.current_contract_address() {
             let stream_contract: Address = env
                 .storage()
@@ -170,6 +170,7 @@ fn test_datakey_stream_serializes_deterministically() {
         withdrawn_amount: 0,
         start_time: 1,
         last_update_time: 1,
+        cliff_time: None,
         is_active: true,
         paused: false,
         paused_at: None,
@@ -2475,6 +2476,7 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             withdrawn_amount: withdrawn,
             start_time: 0,
             last_update_time: 0,
+            cliff_time: None,
             is_active: true,
             paused,
             paused_at: if paused {
@@ -2482,15 +2484,12 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 None
             },
-            schedule: VestingSchedule::Linear,
-            arbiter: None,
-            dispute_status: DisputeStatus::None,
-            is_allowance_based: false,
             status: if paused {
                 StreamStatus::Paused
             } else {
                 StreamStatus::Active
             },
+            schedule: VestingSchedule::Linear,
             arbiter: None,
             dispute_status: DisputeStatus::None,
             is_allowance_based: false,
