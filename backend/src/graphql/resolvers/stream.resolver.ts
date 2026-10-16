@@ -1,12 +1,12 @@
-import { queryField, list, stringArg, bigIntArg, intArg, floatArg } from "nexus";
-import { batchStreamsByIds, batchEventsByStreamIds, batchTokensByAddresses } from "../graphql/dataloaders";
-import { Stream, StreamEvent, TokenRegistry } from "./schema";
+import { queryField, list, stringArg, intArg, floatArg } from "nexus";
+import { batchStreamsByIds, batchEventsByStreamIds } from "../graphql/dataloaders.ts";
+import { Stream, StreamEvent } from "./schema.ts";
 
 export const StreamResolvers = {
   Query: {
     stream: queryField("stream", {
       args: {
-        streamId: bigIntArg({ required: true }),
+        streamId: intArg({ required: true }),
       },
       resolve: (_parent, { streamId }, ctx) => {
         return ctx.prisma.stream.findUnique({
@@ -22,15 +22,14 @@ export const StreamResolvers = {
         pagination: stringArg({ nullable: true }),
       },
       resolve: (_parent, { filter, pagination }, ctx) => {
-        // Use DataLoader for batching
-        const where = filter
+        const where: any = filter
           ? {
               AND: [
                 filter.status && { isActive: filter.status === "active" },
                 filter.tokenAddress && { tokenAddress: filter.tokenAddress },
                 filter.sender && { sender: filter.sender },
                 filter.recipient && { recipient: filter.recipient },
-              ].filter(Boolean) as any,
+              ].filter(Boolean),
             }
           : {};
 
@@ -38,11 +37,7 @@ export const StreamResolvers = {
         const cursor = pagination?.cursor ? BigInt(pagination.cursor) : undefined;
 
         const items = ctx.prisma.stream.findMany({
-          where: { ...where, ...(filter && {
-            OR: [
-              filter.status && { isActive: filter.status === "active" },
-              filter.tokenAddress && { tokenAddress: filter.tokenAddress },
-            ]}.filter(Boolean) as any),
+          where,
           take,
           cursor: cursor ? { streamId: cursor } : undefined,
           orderBy: { streamId: "desc" },
@@ -50,7 +45,7 @@ export const StreamResolvers = {
         });
 
         const hasNextPage = await ctx.prisma.stream.count({
-          where: { ...where, streamId: { _lt: cursor } },
+          where: { streamId: { _lt: cursor } },
         }) > 0;
 
         return {
@@ -92,13 +87,13 @@ export const StreamResolvers = {
   },
 
   Stream: {
-    events: async (_parent, _args, ctx) => {
+    events: (_parent, _args, ctx) => {
       return ctx.prisma.streamEvent.findMany({
         where: { streamId: _parent.streamId },
         orderBy: { timestamp: "desc" },
       });
     },
-    positions: async (_parent, _args, ctx) => {
+    positions: (_parent, _args, ctx) => {
       // Would return position metadata for this stream
       return [];
     },
@@ -108,14 +103,6 @@ export const StreamResolvers = {
     stream: (_parent, _args, ctx) => {
       return ctx.prisma.stream.findUnique({
         where: { streamId: _parent.streamId },
-      });
-    },
-  },
-
-  Token: {
-    address: (_parent, _args, ctx) => {
-      return ctx.prisma.tokenRegistry.findUnique({
-        where: { contractAddress: _parent.tokenAddress },
       });
     },
   },

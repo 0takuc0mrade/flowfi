@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import supertest from "supertest";
-import app from "../../app";
+import app from "../../src/app.ts";
 
 describe("GraphQL API", () => {
   it("passes introspection queries and validates schema against TypeScript types", async () => {
@@ -63,7 +63,7 @@ describe("GraphQL API", () => {
     const response = await supertest(app)
       .post("/graphql")
       .send({
-        query: "query { accountOverview(address: \"GABCDEF1234567890ABCDEF1234567890ABCDEF12345678") { totalDeposited totalWithdrawn activeStreams }",
+        query: "query { accountOverview(address: \"GABCDEF1234567890ABCDEF1234567890ABCDEF12345678\") { totalDeposited totalWithdrawn activeStreams }",
       });
 
     expect(response.status).toBe(200);
@@ -83,7 +83,7 @@ describe("GraphQL API", () => {
     const response = await supertest(app)
       .post("/graphql")
       .send({
-        query: "subscription { userStreams(address: \"GABCDEF1234567890ABCDEF1234567890ABCDEF12345678") { id eventType timestamp }",
+        query: "subscription { userStreams(address: \"GABCDEF1234567890ABCDEF1234567890ABCDEF12345678\") { id eventType timestamp }",
       });
 
     expect(response.status).toBe(200);

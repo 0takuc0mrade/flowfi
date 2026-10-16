@@ -1,5 +1,5 @@
 import { makeSchema } from "@nexus/schema";
-import * as types from "./src/graphql/schema";
+import * as types from "./src/graphql/schema.ts";
 import { requestContext } from "nexus";
 import express from "express";
 

@@ -20,7 +20,7 @@ import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
-import graphqlRoutes from "./graphql/routes.js";
+import { graphqlRoutes } from "./graphql/routes.js";
 
 // Mount at POST /graphql and GET /graphql (GraphiQL playground in non-production).
 
