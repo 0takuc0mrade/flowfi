@@ -20,6 +20,9 @@ import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
+import graphqlRoutes from "./graphql/routes.js";
+
+// Mount at POST /graphql and GET /graphql (GraphiQL playground in non-production).
 
 const app = express();
 
@@ -155,6 +158,18 @@ app.use("/health", healthRateLimiter, healthRoutes);
 // Prometheus cannot send a version prefix or an Authorization header by
 // default. Access control lives in the router (see metrics.routes.ts).
 app.use("/metrics", metricsRoutes);
+
+// GraphQL API endpoint
+app.use("/graphql", graphqlRoutes);
+app.use("/graphql", graphqlPlaygroundRoute);
+
+// GraphiQL playground route (development only)
+function graphqlPlaygroundRoute(_req: Request, res: Response, next: NextFunction) {
+  if (process.env.NODE_ENV === "production") {
+    return next();
+  }
+  res.sendFile("/workspaces/flowfi/backend/src/graphql/playground.html", { root: "." });
+}
 
 /**
  * @openapi
