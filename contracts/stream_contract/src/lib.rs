@@ -2374,6 +2374,7 @@ impl StreamContract {
                 yield_enabled: false,
                 is_allowance_based: true,
             },
+        );
 
         env.events().publish(
             (Symbol::new(&env, "allowance_stream_created"), stream_id),
