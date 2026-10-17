@@ -57,8 +57,8 @@ use events::{
     HybridCliffStreamCreatedEvent, InitializedEvent, MilestoneConditionUnlockedEvent,
     ProtocolPauseStatusEvent, RecipientTransferredEvent, StateMigratedEvent,
     StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
-    StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent,
-    StreamToppedUpEvent, TokensWithdrawnEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent, StreamRefueledEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
