@@ -6777,4 +6777,3 @@ fn test_yield_distribution_mock() {
     assert_eq!(stream.withdrawn_amount, 100);
     assert_eq!(stream.deposited_amount, 1_000);
 }
-}

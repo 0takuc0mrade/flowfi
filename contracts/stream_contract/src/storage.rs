@@ -288,6 +288,7 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         // New fields default to no arbiter, no dispute, and non-allowance-based.
         arbiter: None,
         dispute_status: DisputeStatus::None,
+        yield_enabled: false,
         is_allowance_based: false,
     }
 }
