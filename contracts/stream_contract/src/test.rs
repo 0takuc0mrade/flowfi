@@ -15,8 +15,8 @@ use events::{
     ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
     HybridCliffStreamCreatedEvent, InitializedEvent, ProtocolPauseStatusEvent, ProtocolPausedEvent,
     StateMigratedEvent, StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent,
-    StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamRefueledEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{
     DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
@@ -2757,9 +2757,6 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
-            arbiter: None,
-            dispute_status: types::DisputeStatus::None,
-            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
