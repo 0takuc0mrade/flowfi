@@ -1,6 +1,6 @@
 // DataLoader batching helpers for GraphQL queries.
 
-import { Stream, StreamEvent } from "../generated/prisma/client.ts";
+import { Stream, StreamEvent } from "../generated/prisma/index.js";
 
 // Batch stream lookups into a single SQL WHERE id IN (...)
 export const batchStreamsByIds = async (

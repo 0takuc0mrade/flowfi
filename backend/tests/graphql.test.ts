@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import supertest from "supertest";
-import app from "../../src/app.ts";
+import app from "../../src/app.js";
 
 describe("GraphQL API", () => {
   it("passes introspection queries and validates schema against TypeScript types", async () => {
