@@ -1,7 +1,11 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { Response } from 'express';
 import { EventEmitter } from 'node:events';
-import { SSEService } from '../src/services/sse.service.js';
+import {
+  SSEService,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_MESSAGE,
+} from '../src/services/sse.service.js';
 
 const MAX_WRITABLE_BUFFER = 64 * 1024;
 
@@ -188,5 +192,110 @@ describe('SSEService sandbox event tagging (#1535)', () => {
 
     const message = vi.mocked(res.write).mock.calls[0]?.[0] as string;
     expect(message).not.toContain('_sandbox');
+  });
+});
+
+describe('SSEService keepalive heartbeat', () => {
+  let service: SSEService;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    service = new SSEService();
+  });
+
+  afterEach(() => {
+    service.stopHeartbeat();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('uses a 25s interval and an SSE comment frame', () => {
+    expect(HEARTBEAT_INTERVAL_MS).toBe(25_000);
+    expect(HEARTBEAT_MESSAGE).toBe(': keepalive\n\n');
+  });
+
+  it('writes a keepalive comment to every connected client every 25 seconds', () => {
+    const resA = createMockResponse();
+    const resB = createMockResponse();
+    service.addClient('client-a', resA);
+    service.addClient('client-b', resB);
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS - 1);
+    expect(resA.write).not.toHaveBeenCalled();
+    expect(resB.write).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(resA.write).toHaveBeenCalledTimes(1);
+    expect(resA.write).toHaveBeenLastCalledWith(': keepalive\n\n');
+    expect(resB.write).toHaveBeenCalledTimes(1);
+    expect(resB.write).toHaveBeenLastCalledWith(': keepalive\n\n');
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2);
+    expect(resA.write).toHaveBeenCalledTimes(3);
+    expect(resB.write).toHaveBeenCalledTimes(3);
+  });
+
+  it('prunes clients whose heartbeat write fails and keeps the rest alive', () => {
+    const brokenRes = createMockResponse({ throwOnWrite: true });
+    const healthyRes = createMockResponse();
+    service.addClient('broken-client', brokenRes);
+    service.addClient('healthy-client', healthyRes);
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+    expect(service.getClientCount()).toBe(1);
+    expect(brokenRes.end).toHaveBeenCalled();
+    expect(service.isHeartbeatRunning()).toBe(true);
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+    expect(brokenRes.write).toHaveBeenCalledTimes(1);
+    expect(healthyRes.write).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops the timer when the last client disconnects and restarts on reconnect', () => {
+    const res = createMockResponse();
+    service.addClient('client-a', res);
+    expect(service.isHeartbeatRunning()).toBe(true);
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+
+    res.emitter.emit('close');
+
+    expect(service.isHeartbeatRunning()).toBe(false);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+
+    const next = createMockResponse();
+    service.addClient('client-b', next);
+    expect(service.isHeartbeatRunning()).toBe(true);
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+    expect(next.write).toHaveBeenCalledWith(': keepalive\n\n');
+  });
+
+  it('stops the timer when the only client is pruned by a failed heartbeat', () => {
+    service.addClient('broken-client', createMockResponse({ throwOnWrite: true }));
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+    expect(service.getClientCount()).toBe(0);
+    expect(service.isHeartbeatRunning()).toBe(false);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the timer on shutdown and does not restart it', () => {
+    const res = createMockResponse();
+    service.addClient('client-a', res);
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+
+    service.sendReconnectToAll();
+
+    expect(service.isHeartbeatRunning()).toBe(false);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2);
+    expect(res.write).not.toHaveBeenCalledWith(': keepalive\n\n');
+
+    service.addClient('late-client', createMockResponse());
+    expect(service.isHeartbeatRunning()).toBe(false);
   });
 });

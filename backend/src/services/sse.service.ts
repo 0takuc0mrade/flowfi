@@ -9,7 +9,10 @@ import {
   setSseConnectionCounts,
 } from '../lib/metrics.js';
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+// Kept well under the 60s idle timeout of common proxies/load balancers
+// (Nginx, Cloudflare, AWS ALB) so silent streams are not dropped.
+export const HEARTBEAT_INTERVAL_MS = 25_000;
+export const HEARTBEAT_MESSAGE = ': keepalive\n\n';
 const MAX_WRITABLE_BUFFER = 64 * 1024;
 const MAX_CONNECTIONS_PER_IP = 5;
 const MAX_CONNECTIONS_PER_USER = 10;
@@ -186,15 +189,16 @@ export class SSEService {
   }
 
   sendHeartbeat(): void {
-    const message = ': heartbeat\n\n';
-
+    // writeToClient prunes clients whose write throws or who are too slow,
+    // which may in turn stop the timer once the last client is gone.
     for (const client of this.clients.values()) {
-      this.writeToClient(client, message);
+      this.writeToClient(client, HEARTBEAT_MESSAGE);
     }
   }
 
   sendReconnectToAll(): void {
     this.shuttingDown = true;
+    this.stopHeartbeat();
     const message = 'event: reconnect\ndata: {}\n\n';
     for (const client of this.clients.values()) {
       try {
@@ -300,8 +304,12 @@ export class SSEService {
     }
   }
 
+  isHeartbeatRunning(): boolean {
+    return this.heartbeatTimer !== null;
+  }
+
   private ensureHeartbeat(): void {
-    if (this.heartbeatTimer) {
+    if (this.heartbeatTimer || this.shuttingDown) {
       return;
     }
 
@@ -329,6 +337,11 @@ export class SSEService {
 
     this.clients.delete(clientId);
     this.publishConnectionMetrics();
+
+    // No one left to keep alive; addClient restarts the timer on demand.
+    if (this.clients.size === 0) {
+      this.stopHeartbeat();
+    }
 
     const currentIpCount = this.ipConnectionCounts.get(client.ip) ?? 0;
     if (currentIpCount <= 1) {
