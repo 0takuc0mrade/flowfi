@@ -4867,6 +4867,117 @@ fn test_hybrid_cliff_allows_top_up_and_extends_tail() {
     assert_eq!(client.get_claimable_amount(&id), Some(1_600));
 }
 
+#[test]
+fn test_cliff_at_exact_start_time_vests_linearly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+
+    // 0-second cliff: cliff_duration = 0, so cliff_time == start_time.
+    // Duration is 100 seconds, total amount is 1_000, linear rate is 10/s.
+    let id = client.create_stream_with_cliff(&sender, &recipient, &token, &1_000, &100, &0);
+
+    // Before/at start_time (elapsed = 0):
+    // Cliff is at start_time, so cliff is immediately satisfied, but 0 elapsed means 0 claimable.
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&client.address), 1_000);
+
+    // Midpoint (advance 50s): exactly 500 vested
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_eq!(client.withdraw(&recipient, &id), 500);
+    assert_eq!(token_client.balance(&recipient), 500);
+    assert_eq!(token_client.balance(&client.address), 500);
+
+    // Stop time (advance 50s, total elapsed = 100): remaining 500 vested
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_eq!(client.withdraw(&recipient, &id), 500);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert!(client.is_stream_completed(&id));
+
+    // After stop_time (advance 10s): nothing left to claim
+    advance(&env, 10);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamInactive
+    );
+}
+
+#[test]
+fn test_cliff_at_exact_stop_time_unlocks_all_at_end() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+
+    // Full-duration cliff: cliff_duration == duration (100s), so cliff_time == stop_time.
+    let id = client.create_stream_with_cliff(&sender, &recipient, &token, &1_000, &100, &100);
+
+    // At start_time: cliff not reached, 0 claimable
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&client.address), 1_000);
+
+    // Midpoint (advance 50s): cliff still in future (50 < 100), claimable is 0
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+
+    // Just before stop_time (advance 49s, elapsed = 99s): cliff still in future (99 < 100)
+    advance(&env, 49);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+
+    // At exact stop_time (advance 1s, elapsed = 100s == cliff_time):
+    // 100% of funds unlock at stop_time!
+    advance(&env, 1);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert!(client.is_stream_completed(&id));
+
+    // After stop_time (advance 10s): nothing left to claim, stream remains completed
+    advance(&env, 10);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamInactive
+    );
+    assert!(client.is_stream_completed(&id));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // F3 — In-Place Upgrades & State Migration
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6230,6 +6341,144 @@ fn test_batch_withdraw_never_exceeds_escrow_across_many_streams() {
     client.batch_withdraw(&recipient, &ids);
     assert_eq!(balances.balance(&recipient), 10_000);
     assert_eq!(balances.balance(&contract), 0, "escrow not fully drained");
+}
+
+#[test]
+fn test_batch_withdraw_with_duplicate_stream_ids() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let contract_address = client.address.clone();
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&contract_address), 1_000);
+
+    // Advance 500 seconds so exactly 500 tokens are vested
+    advance(&env, 500);
+
+    let contract_balance_before = token_client.balance(&contract_address);
+    let recipient_balance_before = token_client.balance(&recipient);
+    assert_eq!(contract_balance_before, 1_000);
+    assert_eq!(recipient_balance_before, 0);
+
+    // Invoke batch_withdraw with duplicate IDs [id, id]
+    let result = client.batch_withdraw(&recipient, &vec![&env, id, id]);
+
+    // The first iteration claims the 500 claimable tokens; the duplicate second
+    // iteration observes 0 remaining claimable and is cleanly skipped.
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), (id, 500));
+
+    // Confirm token contract balances before and after batch_withdraw
+    let contract_balance_after = token_client.balance(&contract_address);
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(contract_balance_after, 500);
+    assert_eq!(recipient_balance_after, 500);
+
+    // Verify stream record accurately reflects the withdrawn amount
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 500);
+    assert_eq!(stream.deposited_amount, 1_000);
+
+    // Advance to stop_time and pass duplicates [id, id, id]
+    advance(&env, 500);
+    let result_drained = client.batch_withdraw(&recipient, &vec![&env, id, id, id]);
+    assert_eq!(result_drained.len(), 1);
+    assert_eq!(result_drained.get(0).unwrap(), (id, 500));
+
+    assert_eq!(token_client.balance(&contract_address), 0);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+
+    let final_stream = client.get_stream(&id).unwrap();
+    assert_eq!(final_stream.withdrawn_amount, 1_000);
+    assert!(final_stream.is_completed());
+}
+
+#[test]
+fn test_stream_status_helper_methods() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Initially active
+    let mut stream = client.get_stream(&id).unwrap();
+    assert!(stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    // Pause stream
+    client.pause_stream(&sender, &id);
+    let paused_stream = client.get_stream(&id).unwrap();
+    assert!(!paused_stream.is_active());
+    assert!(paused_stream.is_paused());
+    assert!(!paused_stream.is_cancelled());
+    assert!(!paused_stream.is_completed());
+
+    // Resume stream
+    client.resume_stream(&sender, &id);
+    let resumed_stream = client.get_stream(&id).unwrap();
+    assert!(resumed_stream.is_active());
+    assert!(!resumed_stream.is_paused());
+    assert!(!resumed_stream.is_cancelled());
+    assert!(!resumed_stream.is_completed());
+
+    // Fully withdraw to complete
+    advance(&env, 100);
+    client.withdraw(&recipient, &id);
+    let completed_stream = client.get_stream(&id).unwrap();
+    assert!(!completed_stream.is_active());
+    assert!(!completed_stream.is_paused());
+    assert!(!completed_stream.is_cancelled());
+    assert!(completed_stream.is_completed());
+
+    // Cancel test on a second stream
+    mint(&env, &token, &sender, 1_000);
+    let id2 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    client.cancel_stream(&sender, &id2);
+    let cancelled_stream = client.get_stream(&id2).unwrap();
+    assert!(!cancelled_stream.is_active());
+    assert!(!cancelled_stream.is_paused());
+    assert!(cancelled_stream.is_cancelled());
+    assert!(!cancelled_stream.is_completed());
+
+    // Synthetic status test covering all variants
+    stream.status = StreamStatus::Active;
+    assert!(stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    stream.status = StreamStatus::Paused;
+    assert!(!stream.is_active());
+    assert!(stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    stream.status = StreamStatus::Cancelled;
+    assert!(!stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    stream.status = StreamStatus::Completed;
+    assert!(!stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(stream.is_completed());
 }
 
 // ─── Coverage: modify_rate (#1316) ──────────────────────────────────────────

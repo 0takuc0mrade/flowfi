@@ -319,6 +319,32 @@ pub struct Stream {
     pub is_allowance_based: bool,
 }
 
+impl Stream {
+    /// Returns `true` if the stream has `StreamStatus::Active`.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.status == StreamStatus::Active
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Paused`.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.status == StreamStatus::Paused
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Cancelled`.
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.status == StreamStatus::Cancelled
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Completed`.
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        self.status == StreamStatus::Completed
+    }
+}
+
 /// Alias for DataKey representing storage keys in the contract.
 pub type StorageKey = DataKey;
 
