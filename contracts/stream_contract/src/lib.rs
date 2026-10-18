@@ -32,6 +32,7 @@ pub mod errors;
 pub mod events;
 pub mod storage;
 pub mod types;
+pub mod yield_strategy;
 
 // #[cfg(test)]
 // mod acceptance_tests;
@@ -434,6 +435,7 @@ impl StreamContract {
                 schedule: VestingSchedule::Linear,
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: false,
             },
         );
@@ -568,6 +570,7 @@ impl StreamContract {
                     schedule: VestingSchedule::Linear,
                     arbiter: None,
                     dispute_status: DisputeStatus::None,
+                    yield_enabled: false,
                     is_allowance_based: false,
                 },
             );
@@ -661,6 +664,7 @@ impl StreamContract {
                 schedule: VestingSchedule::Linear,
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: false,
             },
         );
@@ -859,6 +863,7 @@ impl StreamContract {
                 schedule: VestingSchedule::StepTranches(steps),
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: false,
             },
         );
@@ -957,6 +962,7 @@ impl StreamContract {
                 schedule: VestingSchedule::HybridCliffLinear(cliff_time, cliff_unlock_amount),
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: false,
             },
         );
@@ -1142,6 +1148,7 @@ impl StreamContract {
                 schedule: VestingSchedule::StepTranches(steps),
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: false,
             },
         );
@@ -2365,6 +2372,7 @@ impl StreamContract {
                 schedule: VestingSchedule::Linear,
                 arbiter: None,
                 dispute_status: DisputeStatus::None,
+                yield_enabled: false,
                 is_allowance_based: true,
             },
         );

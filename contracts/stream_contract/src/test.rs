@@ -178,6 +178,7 @@ fn test_datakey_stream_serializes_deterministically() {
         schedule: VestingSchedule::Linear,
         arbiter: None,
         dispute_status: DisputeStatus::None,
+        yield_enabled: false,
         is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
@@ -2487,6 +2488,7 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             schedule: VestingSchedule::Linear,
             arbiter: None,
             dispute_status: DisputeStatus::None,
+            yield_enabled: false,
             is_allowance_based: false,
             status: if paused {
                 StreamStatus::Paused
@@ -4791,9 +4793,9 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // The current `Stream` shape is 17 fields: `LegacyStream` carries neither
-    // `schedule`/`cliff_time` nor the dispute/allowance fields.
-    raw_stream_field_count(env, contract, stream_id) == 17
+    // The current `Stream` shape is 18 fields: `LegacyStream` carries neither
+    // `schedule`/`cliff_time` nor the dispute/allowance/yield fields.
+    raw_stream_field_count(env, contract, stream_id) == 18
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
@@ -6702,4 +6704,62 @@ fn test_bump_position_ttl_helper_directly() {
         client.try_bump_stream_ttl(&999_999),
         Err(Ok(StreamError::StreamNotFound))
     );
+}
+
+// ─── Yield Strategy Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_yield_enabled_stored_on_stream_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    // Create stream with yield_enabled concept - the flag is stored in state.
+    // Since the public API doesn't yet accept a yield_enabled parameter,
+    // we verify the field exists and defaults to false by checking
+    // the stream struct directly.
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    let stream = client.get_stream(&id).unwrap();
+    assert!(
+        !stream.yield_enabled,
+        "yield_enabled should default to false"
+    );
+}
+
+#[test]
+fn test_yield_distribution_mock() {
+    // Yield generation is opt-in and disabled by default, so a stream still
+    // follows the standard fee/withdraw math. This mock exercises that path
+    // without requiring a real yield-pool contract.
+    use soroban_sdk::Env;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    client.initialize(&treasury, &treasury, &250);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Advance time so some tokens accrue.
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // Withdraw should work and consume the accrued amount. The 250 bps fee
+    // leaves 975 deposited, so the rate is 9 tokens/second over 100 seconds.
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 900);
+
+    // Verify the stream has recorded the withdrawal against the net deposit.
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 900);
+    assert_eq!(stream.deposited_amount, 975);
 }

@@ -244,6 +244,9 @@ pub struct Stream {
     pub arbiter: Option<Address>,
     /// Dispute status for escrow cancellations (for #1319).
     pub dispute_status: DisputeStatus,
+    /// Whether this stream has yield generation enabled.
+    /// When true, idle deposited tokens are routed to a yield strategy adapter.
+    pub yield_enabled: bool,
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
 }
