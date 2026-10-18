@@ -2083,8 +2083,10 @@ export interface paths {
          *
          *     **Sandbox Mode:**
          *     - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
-         *     - Sandbox events are clearly marked with `_sandbox` metadata
-         *     - Sandbox events are isolated from production events
+         *     - The `connected` frame and every event delivered to a sandbox
+         *       connection are tagged with `_sandbox: true`
+         *     - Sandbox mode labels/tags events; it does not route to a separate
+         *       datastore or otherwise isolate stored data
          */
         get: {
             parameters: {
