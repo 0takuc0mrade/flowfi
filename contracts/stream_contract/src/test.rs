@@ -1561,6 +1561,48 @@ fn test_create_stream_zero_rate() {
     assert_stream_error!(result, StreamError::InvalidRate);
 }
 
+// Issue #1542: a rejected `create_stream` must roll back *everything* it did —
+// the gross transfer from the sender, any fee it computed for the treasury, and
+// the stream-id counter bump — not merely return `InvalidRate`.
+#[test]
+fn test_create_stream_invalid_rate_rolls_back_transfer_fee_and_counter() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 100);
+
+    let client = create_contract(&env);
+    // A 1% protocol fee makes the gross (100) and net (99) diverge: 99 / 1_000
+    // rounds to a 0/s rate, which `create_stream` rejects as `InvalidRate`.
+    client.initialize(&admin, &treasury, &100);
+
+    let token_client = token::Client::new(&env, &token);
+    let sender_before = token_client.balance(&sender);
+    let treasury_before = token_client.balance(&treasury);
+    let contract_before = token_client.balance(&client.address);
+
+    let result = client.try_create_stream(&sender, &recipient, &token, &100, &1_000);
+    assert_stream_error!(result, StreamError::InvalidRate);
+
+    // The sender's gross transfer to the contract is unwound and no fee was
+    // retained by the contract or paid to the treasury.
+    assert_eq!(token_client.balance(&sender), sender_before);
+    assert_eq!(token_client.balance(&treasury), treasury_before);
+    assert_eq!(token_client.balance(&client.address), contract_before);
+
+    // `next_stream_id` bumps before the rate guard, so the failed attempt must
+    // not consume an ID: the next successful stream is still stream #1.
+    let stream_id = client.create_stream(&sender, &recipient, &token, &100, &10);
+    assert_eq!(stream_id, 1);
+    assert!(client.get_stream(&stream_id).is_some());
+    // The successful create did charge the fee, proving the fee machinery ran.
+    assert_eq!(token_client.balance(&treasury), treasury_before + 1);
+}
+
 #[test]
 fn test_create_stream_rate_exactly_one_succeeds() {
     // amount == duration → rate = 1, which is the smallest valid rate.
@@ -2017,6 +2059,42 @@ fn test_is_stream_completed_helper() {
     client.withdraw(&recipient, &id);
 
     assert!(client.is_stream_completed(&id));
+}
+
+// ─── Missing-state read-only queries (#1541) ─────────────────────────────────
+
+#[test]
+fn test_get_stream_missing_id_returns_none() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // A never-created ID must read as `None` rather than a `StreamNotFound`
+    // error, exercising `try_load_stream`'s absent-key branch.
+    assert!(client.get_stream(&0).is_none());
+    assert!(client.get_stream(&1).is_none());
+    assert!(client.get_stream(&u64::MAX).is_none());
+}
+
+#[test]
+fn test_get_fee_config_before_initialize_returns_none() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // `initialize` has never been called, so `try_load_config` has no record to
+    // decode and `get_fee_config` must report the absence as `None`.
+    assert!(client.get_fee_config().is_none());
+}
+
+#[test]
+fn test_is_stream_completed_missing_id_returns_false() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // A never-created stream is not "completed"; the missing branch of
+    // `try_load_stream` must map to `false` rather than panic.
+    assert!(!client.is_stream_completed(&0));
+    assert!(!client.is_stream_completed(&1));
+    assert!(!client.is_stream_completed(&u64::MAX));
 }
 
 #[test]
