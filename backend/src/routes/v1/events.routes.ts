@@ -6,11 +6,12 @@ import { requireAdmin, requireAuth } from '../../middleware/auth.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import logger from '../../logger.js';
 import {
+  DEFAULT_EVENTS_PAGE_SIZE,
+  MAX_EVENTS_PAGE_SIZE,
   listEventsForWallet,
   parseEventTypeFilter,
-  resolveEventsOffset,
-  resolveEventsPageSize,
 } from '../../repositories/streamEvent.repository.js';
+import { parsePagination } from '../../validators/stream.validator.js';
 import { isSandboxRequest } from '../../middleware/sandbox.middleware.js';
 
 const router = Router();
@@ -110,12 +111,15 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const limit = resolveEventsPageSize(req.query.limit);
-    const offset = resolveEventsOffset({
-      rawOffset: req.query.offset,
-      rawPage: req.query.page,
-      limit,
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_EVENTS_PAGE_SIZE,
+      maxLimit: MAX_EVENTS_PAGE_SIZE,
     });
+    if (!pagination.ok) {
+      res.status(400).json({ error: pagination.message });
+      return;
+    }
+    const { limit, offset } = pagination;
     const includeStream = req.query.includeStream === 'true';
 
     const isSandbox = isSandboxRequest(req);
