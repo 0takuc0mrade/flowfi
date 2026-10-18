@@ -1342,6 +1342,45 @@ fn test_cancel_stream_refunds_sender() {
 }
 
 #[test]
+fn test_cancel_fully_accrued_stream_without_withdraw_is_cancelled() {
+    // #1543: a stream that has fully accrued but was never withdrawn and is then
+    // cancelled must pay 100% of the deposit to the recipient with a zero refund
+    // to the sender, and end as `Cancelled` — never `Completed`, which only
+    // `apply_withdrawal` can set.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    // 1_000 tokens over 100 seconds = 10 tokens/second.
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Advance well past the full duration without ever calling withdraw.
+    env.ledger().with_mut(|l| l.timestamp += 10_000);
+
+    let sender_balance_before = token_client.balance(&sender);
+    client.cancel_stream(&sender, &stream_id);
+
+    // Recipient gets the entire deposit; sender gets a zero refund.
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&sender) - sender_balance_before, 0);
+    assert_eq!(token_client.balance(&contract_id), 0);
+
+    // The cancel path must record `Cancelled`, not `Completed`.
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert!(!stream.is_active);
+    assert_eq!(stream.withdrawn_amount, 1_000);
+}
+
+#[test]
 fn test_cancel_stream_after_partial_withdrawal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1545,6 +1584,83 @@ fn test_create_stream_self_stream() {
     let s = client.get_stream(&id).unwrap();
     assert_eq!(s.sender, actor);
     assert_eq!(s.recipient, actor);
+}
+
+#[test]
+fn test_withdraw_self_stream_credits_shared_address_once() {
+    // #1544: with sender == recipient, a withdrawal pays the same Address that
+    // funded the stream. The accrued amount must be credited exactly once, with
+    // no double-count, and claiming the remainder must total the deposit.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let actor = Address::generate(&env);
+    mint(&env, &token, &actor, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    // 1_000 tokens over 1_000 s = 1 token/s.
+    let id = client.create_stream(&actor, &actor, &token, &1_000, &1_000);
+    // Creation moved the whole deposit into the contract.
+    assert_eq!(token_client.balance(&actor), 0);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    let claimed = client.withdraw(&actor, &id);
+
+    // 300 accrued is credited once — not once per "side" of the stream.
+    assert_eq!(claimed, 300);
+    assert_eq!(token_client.balance(&actor), 300);
+
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.withdrawn_amount, 300);
+    assert!(s.is_active);
+
+    // The remaining 700 brings the shared address to the full deposit exactly.
+    env.ledger().with_mut(|l| l.timestamp += 700);
+    let rest = client.withdraw(&actor, &id);
+    assert_eq!(rest, 700);
+    assert_eq!(token_client.balance(&actor), 1_000);
+
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.status, StreamStatus::Completed);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_cancel_self_stream_settles_both_transfers() {
+    // #1544: cancel_stream issues two transfers — accrued to the recipient and
+    // the refund to the sender. With sender == recipient both legs land on the
+    // same Address and must sum to exactly the deposit, with nothing lost or
+    // duplicated.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let actor = Address::generate(&env);
+    mint(&env, &token, &actor, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    let id = client.create_stream(&actor, &actor, &token, &1_000, &1_000);
+    assert_eq!(token_client.balance(&actor), 0);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+
+    let balance_before = token_client.balance(&actor);
+    client.cancel_stream(&actor, &id);
+    let balance_after = token_client.balance(&actor);
+
+    // accrued (300) + refunded (700) both target `actor`: exactly the deposit.
+    assert_eq!(balance_after - balance_before, 1_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert_eq!(s.withdrawn_amount, 300);
 }
 
 #[test]
