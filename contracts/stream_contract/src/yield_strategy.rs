@@ -1,7 +1,5 @@
-use soroban_sdk::{
-    Address, Env, Symbol, Vec,
-};
 use crate::errors::StreamError;
+use soroban_sdk::{Address, Env};
 
 /// Abstract yield adapter interface for Soroban-native DeFi lending markets.
 ///
@@ -29,24 +27,19 @@ pub trait YieldStrategy {
     fn get_exchange_rate(env: &Env, token: &Address) -> i128;
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::Address;
-    use soroban_sdk::Env;
 
     #[test]
     fn test_yield_strategy_trait_dispatch() {
         // Verify the trait methods have the correct signatures by checking
         // that they can be assigned to function pointers with the expected types.
         // Concrete implementations must satisfy these signatures.
-        let _deposit: fn(&Env, &Address, i128) -> Result<i128, StreamError> = |_env, _token, _amount| {
-            Ok(0i128)
-        };
-        let _withdraw: fn(&Env, &Address, i128) -> Result<i128, StreamError> = |_env, _token, _shares| {
-            Ok(0i128)
-        };
-        let _exchange_rate: fn(&Env, &Address) -> i128 = |_env, _token| {
-            1i128
-        };
+        let _deposit: fn(&Env, &Address, i128) -> Result<i128, StreamError> =
+            |_env, _token, _amount| Ok(0i128);
+        let _withdraw: fn(&Env, &Address, i128) -> Result<i128, StreamError> =
+            |_env, _token, _shares| Ok(0i128);
+        let _exchange_rate: fn(&Env, &Address) -> i128 = |_env, _token| 1i128;
     }
 }

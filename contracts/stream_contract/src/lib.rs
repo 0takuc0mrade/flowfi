@@ -32,6 +32,7 @@ pub mod errors;
 pub mod events;
 pub mod storage;
 pub mod types;
+pub mod yield_strategy;
 
 // #[cfg(test)]
 // mod acceptance_tests;
