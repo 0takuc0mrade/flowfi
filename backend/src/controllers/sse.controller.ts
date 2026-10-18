@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { sseService } from '../services/sse.service.js';
 import { prisma } from '../lib/prisma.js';
 import { requestContext } from '../logger.js';
@@ -89,7 +90,9 @@ export const subscribe = async (req: Request, res: Response) => {
     }
     subscriptions.push(...userSubscriptions);
 
-    const clientId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    // Issue #1534: client ids must come from a CSPRNG so concurrently
+    // connecting clients cannot collide and clobber each other's registration.
+    const clientId = randomUUID();
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
