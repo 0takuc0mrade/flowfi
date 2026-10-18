@@ -4,6 +4,22 @@ import { Stepper } from "./Stepper";
 
 const steps = ["Connect", "Configure", "Confirm"];
 
+/** Class names of every element matching `selector`, in document order. */
+function allClasses(container: HTMLElement, selector: string): string[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(selector)).map(
+    (el) => el.className
+  );
+}
+
+/** The `index`-th match for `selector`, failing loudly if it is missing. */
+function nth(container: HTMLElement, selector: string, index: number): HTMLElement {
+  const el = container.querySelectorAll<HTMLElement>(selector)[index];
+  if (!el) {
+    throw new Error(`expected at least ${index + 1} match(es) for "${selector}"`);
+  }
+  return el;
+}
+
 describe("Stepper", () => {
   it("renders every step inside an accessible Progress landmark", () => {
     render(<Stepper steps={steps} currentStep={1} />);
@@ -26,16 +42,17 @@ describe("Stepper", () => {
 
   it("applies completed/active/upcoming classes per step index", () => {
     const { container } = render(<Stepper steps={steps} currentStep={2} />);
-    const circles = container.querySelectorAll(".stepper__circle");
-    const labels = container.querySelectorAll(".stepper__label");
 
-    expect(circles[0].className).toContain("stepper__circle--completed");
-    expect(circles[1].className).toContain("stepper__circle--active");
-    expect(circles[2].className).toContain("stepper__circle--upcoming");
-
-    expect(labels[0].className).toContain("stepper__label--completed");
-    expect(labels[1].className).toContain("stepper__label--active");
-    expect(labels[2].className).toContain("stepper__label--upcoming");
+    expect(allClasses(container, ".stepper__circle")).toEqual([
+      expect.stringContaining("stepper__circle--completed"),
+      expect.stringContaining("stepper__circle--active"),
+      expect.stringContaining("stepper__circle--upcoming"),
+    ]);
+    expect(allClasses(container, ".stepper__label")).toEqual([
+      expect.stringContaining("stepper__label--completed"),
+      expect.stringContaining("stepper__label--active"),
+      expect.stringContaining("stepper__label--upcoming"),
+    ]);
   });
 
   it("adds the matching screen-reader suffix to each step", () => {
@@ -47,12 +64,17 @@ describe("Stepper", () => {
 
   it("shows a check icon for completed steps and a number otherwise", () => {
     const { container } = render(<Stepper steps={steps} currentStep={2} />);
-    const circles = container.querySelectorAll(".stepper__circle");
 
-    expect(circles[0].querySelector("svg")).not.toBeNull();
-    expect(circles[1].querySelector("svg")).toBeNull();
-    expect(circles[2].querySelector("svg")).toBeNull();
-    expect(circles[1].querySelector(".stepper__number")?.textContent).toBe("2");
-    expect(circles[2].querySelector(".stepper__number")?.textContent).toBe("3");
+    expect(nth(container, ".stepper__circle", 0).querySelector("svg")).not.toBeNull();
+    expect(nth(container, ".stepper__circle", 1).querySelector("svg")).toBeNull();
+    expect(nth(container, ".stepper__circle", 2).querySelector("svg")).toBeNull();
+    expect(
+      nth(container, ".stepper__circle", 1).querySelector(".stepper__number")
+        ?.textContent
+    ).toBe("2");
+    expect(
+      nth(container, ".stepper__circle", 2).querySelector(".stepper__number")
+        ?.textContent
+    ).toBe("3");
   });
 });
