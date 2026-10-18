@@ -37,24 +37,28 @@ export interface ToxicDefinition {
 
 /**
  * Proxy definitions mirror `docker-compose.chaos.yml` / `toxiproxy.json`.
- * The host-side listen ports are what tests connect to.
+ *
+ * `listen` and `upstream` are resolved *inside the Toxiproxy container*, so the
+ * listener must bind `0.0.0.0` for Docker's published port to reach it. Binding
+ * `127.0.0.1` there makes the host-side mapped port accept and immediately
+ * close every connection (ECONNRESET). Tests connect through `CHAOS_URLS`.
  */
 export const CHAOS_PROXIES = {
   sorobanRpc: {
     name: 'soroban_rpc',
-    listen: '127.0.0.1:18000',
+    listen: '0.0.0.0:18000',
     upstream: 'mock-soroban-rpc:8000',
     enabled: true,
   },
   redis: {
     name: 'redis',
-    listen: '127.0.0.1:16379',
+    listen: '0.0.0.0:16379',
     upstream: 'redis:6379',
     enabled: true,
   },
   postgres: {
     name: 'postgres',
-    listen: '127.0.0.1:15432',
+    listen: '0.0.0.0:15432',
     upstream: 'postgres:5432',
     enabled: true,
   },
@@ -158,6 +162,15 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Toxiproxy echoes a `0.0.0.0` wildcard bind back as `[::]`, so compare
+ * normalised listeners instead of raw strings.
+ */
+function sameTopology(a: ToxiproxyProxy, b: ToxiproxyProxy): boolean {
+  const normalise = (listen: string) => listen.replace(/^\[::\]/, '0.0.0.0');
+  return normalise(a.listen) === normalise(b.listen) && a.upstream === b.upstream;
+}
+
 export class ToxiproxyClient {
   constructor(private readonly baseUrl: string = DEFAULT_TOXIPROXY_URL) {}
 
@@ -207,10 +220,15 @@ export class ToxiproxyClient {
     );
   }
 
+  /**
+   * Toxiproxy's `GET /proxies` answers with a `{ name: proxy }` map (older
+   * versions used an array); normalise both shapes to a list.
+   */
   async listProxies(): Promise<ToxiproxyProxy[]> {
     const raw = await this.request<unknown>('/proxies', { timeoutMs: 3_000 });
-    if (!Array.isArray(raw)) return [];
-    return raw as ToxiproxyProxy[];
+    if (Array.isArray(raw)) return raw as ToxiproxyProxy[];
+    if (raw && typeof raw === 'object') return Object.values(raw) as ToxiproxyProxy[];
+    return [];
   }
 
   createProxy(proxy: ToxiproxyProxy): Promise<ToxiproxyProxy> {
@@ -240,18 +258,25 @@ export class ToxiproxyClient {
     return this.request<void>('/reset', { method: 'POST' });
   }
 
-  /** Idempotently ensure the three FlowFi proxies exist. */
+  /**
+   * Idempotently ensure the three FlowFi proxies exist and match the topology
+   * above. Healthy proxies are left untouched — recreating them would tear
+   * down live connections and, worse, can leave the stack with no listener on
+   * the published port if the create races the delete.
+   */
   async ensureProxies(): Promise<void> {
-    // Delete any proxies with these names first, so we can create them fresh.
+    const existing = new Map((await this.listProxies()).map((p) => [p.name, p]));
+
     for (const proxy of Object.values(CHAOS_PROXIES)) {
-      try {
+      const current = existing.get(proxy.name);
+      if (current && sameTopology(current, proxy)) continue;
+
+      // Stale definition (e.g. a proxy created by an older helper version):
+      // replace it with the expected topology.
+      if (current) {
         await this.deleteProxy(proxy.name);
-      } catch {
-        // may not exist yet — that's fine
       }
-    }
-    for (const proxy of Object.values(CHAOS_PROXIES)) {
-      await this.createProxy({ ...proxy }).catch(() => {/* proxy may have been created in the delete loop above */});
+      await this.createProxy({ ...proxy });
     }
   }
 }

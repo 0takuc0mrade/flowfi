@@ -50,8 +50,11 @@ jobs:
       - name: Show stack state
         run: docker compose -f backend/tests/chaos/docker-compose.chaos.yml ps
 
+      # Coverage is disabled here on purpose: this job runs a single spec, so the
+      # global 60% coverage thresholds from vitest.config.ts can never be met.
+      # The repository-wide coverage gate runs in ci.yml.
       - name: Run chaos resilience tests
-        run: npx vitest run tests/chaos/resilience.chaos.test.ts --reporter=basic
+        run: npx vitest run tests/chaos/resilience.chaos.test.ts --coverage.enabled=false
         working-directory: backend
 
       - name: Dump chaos stack logs on failure

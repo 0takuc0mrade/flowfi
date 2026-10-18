@@ -409,8 +409,14 @@ describe.runIf(chaosStackReady)('Chaos #1477 — Toxiproxy fault injection harne
     const client = new Redis(CHAOS_URLS.redis, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
-      retryStrategy: (times: number) => (times > 5 ? null : 50),
+      // Fail queued commands immediately while severed instead of hanging them.
+      enableOfflineQueue: false,
+      // Keep dialing for the whole scenario; the proxy heals mid-test.
+      retryStrategy: (times: number) => Math.min(times * 50, 250),
     });
+    // Connection resets are the point of this scenario, and ioredis reports
+    // them as 'error' events — an unhandled one would fail the test process.
+    client.on('error', () => undefined);
 
     try {
       await client.connect();
@@ -418,8 +424,17 @@ describe.runIf(chaosStackReady)('Chaos #1477 — Toxiproxy fault injection harne
       expect(await client.get('chaos:key')).toBe('before');
 
       await chaos.addToxic(CHAOS_PROXIES.redis.name, redisKillToxic());
-      // The reset must make the next command fail (connection torn down).
-      await expect(client.ping()).rejects.toBeDefined();
+      // The reset must make the proxy unusable (connection torn down or dials reset).
+      await expect
+        .poll(async () => {
+          try {
+            await client.ping();
+            return 'up';
+          } catch {
+            return 'down';
+          }
+        }, { timeout: 5_000, interval: 100 })
+        .toBe('down');
 
       await chaos.reset();
       await expect
@@ -438,33 +453,35 @@ describe.runIf(chaosStackReady)('Chaos #1477 — Toxiproxy fault injection harne
 
   it('exposes PostgreSQL backpressure under a held connection', async () => {
     const { Client } = await import('pg');
-    const connectWithTimeout = async (timeoutMs: number) => {
-      const client = new Client({
+    const newClient = () =>
+      new Client({
         connectionString: CHAOS_URLS.postgres,
-        connectionTimeoutMillis: timeoutMs,
-        query_timeout: timeoutMs,
+        connectionTimeoutMillis: 2_000,
       });
-      await client.connect();
-      return client;
-    };
 
-    const healthy = await connectWithTimeout(2_000);
+    // Baseline: the proxy forwards traffic normally.
+    const healthy = newClient();
+    await healthy.connect();
     try {
       await healthy.query('SELECT 1');
     } finally {
       await healthy.end().catch(() => undefined);
     }
 
-    await chaos.addToxic(CHAOS_PROXIES.postgres.name, postgresHoldToxic(5_000));
-    const held = await connectWithTimeout(2_000);
+    // Establish the connection *before* the fault so the hold applies to the
+    // query path rather than to the handshake.
+    const held = newClient();
+    await held.connect();
     try {
+      await chaos.addToxic(CHAOS_PROXIES.postgres.name, postgresHoldToxic(5_000));
       const outcome = await Promise.race([
         held.query('SELECT 1').then(() => 'ok').catch(() => 'error'),
         new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
       ]);
-      expect(outcome).not.toBe('ok');
+      expect(outcome).toBe('timeout');
     } finally {
-      await held.end().catch(() => undefined);
+      // `end()` destroys the socket when a query is still in flight.
+      held.end().catch(() => undefined);
     }
   });
 });
