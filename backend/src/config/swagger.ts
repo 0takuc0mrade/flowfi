@@ -82,6 +82,10 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         description:
           'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
       },
+      {
+        name: 'Analytics',
+        description: 'Public protocol statistics (TVL, history, DefiLlama)',
+      },
     ],
     components: {
       securitySchemes: {
