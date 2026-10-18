@@ -22,6 +22,12 @@ interface SSEClient {
   paused: boolean;
   ip: string;
   userId?: string;
+  /**
+   * Issue #1535: clients connected with sandbox mode receive every event
+   * tagged with `_sandbox: true` so test subscriptions are clearly
+   * distinguishable from production traffic.
+   */
+  sandbox: boolean;
 }
 
 interface SSECapacityCheckResult {
@@ -124,6 +130,7 @@ export class SSEService {
     subscriptions: string[] = [],
     ip = 'unknown',
     userId?: string,
+    sandbox = false,
   ): void {
     const nextIpCount = (this.ipConnectionCounts.get(ip) ?? 0) + 1;
     this.ipConnectionCounts.set(ip, nextIpCount);
@@ -141,6 +148,7 @@ export class SSEService {
       subscriptions: new Set(subscriptions),
       paused: false,
       ip,
+      sandbox,
       ...(userId !== undefined && { userId }),
     };
 
@@ -148,7 +156,7 @@ export class SSEService {
     sseConnectionsTotal.inc();
     this.publishConnectionMetrics();
     logger.info(
-      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, subscriptions: ${subscriptions.join(', ')}`
+      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, sandbox: ${sandbox}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
@@ -199,12 +207,22 @@ export class SSEService {
   }
 
   broadcast(event: string, data: unknown, filter?: (client: SSEClient) => boolean): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const isObjectPayload = data !== null && typeof data === 'object';
 
     for (const client of this.clients.values()) {
-      if (!filter || filter(client)) {
-        this.writeToClient(client, message);
+      if (filter && !filter(client)) {
+        continue;
       }
+
+      // Sandbox clients get every event tagged with `_sandbox: true` so the
+      // isolation is observable end-to-end (issue #1535). Production clients
+      // receive the payload untouched.
+      const payload =
+        client.sandbox && isObjectPayload
+          ? { ...(data as Record<string, unknown>), _sandbox: true }
+          : data;
+
+      this.writeToClient(client, `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     }
   }
 

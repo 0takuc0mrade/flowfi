@@ -150,3 +150,43 @@ describe('SSEService per-user connection cap', () => {
     expect(service.getUserConnectionCount(userId)).toBe(0);
   });
 });
+
+describe('SSEService sandbox event tagging (#1535)', () => {
+  let service: SSEService;
+
+  afterEach(() => {
+    service.stopHeartbeat();
+  });
+
+  it('tags events with _sandbox for sandbox clients but not production clients', () => {
+    service = new SSEService();
+
+    const sandboxRes = createMockResponse();
+    const productionRes = createMockResponse();
+
+    service.addClient('sandbox-client', sandboxRes, ['1'], '10.0.0.1', undefined, true);
+    service.addClient('production-client', productionRes, ['1'], '10.0.0.2', undefined, false);
+
+    service.broadcast('stream.topped_up', { streamId: '1', amount: '100' });
+
+    const sandboxMessage = vi.mocked(sandboxRes.write).mock.calls[0]?.[0] as string;
+    const productionMessage = vi.mocked(productionRes.write).mock.calls[0]?.[0] as string;
+
+    expect(sandboxMessage).toContain('"_sandbox":true');
+    expect(sandboxMessage).toContain('"streamId":"1"');
+    expect(productionMessage).not.toContain('_sandbox');
+    expect(productionMessage).toContain('"streamId":"1"');
+  });
+
+  it('defaults new clients to production (untagged) when sandbox is not specified', () => {
+    service = new SSEService();
+
+    const res = createMockResponse();
+    service.addClient('default-client', res, ['1'], '10.0.0.3');
+
+    service.broadcast('stream.created', { streamId: '1' });
+
+    const message = vi.mocked(res.write).mock.calls[0]?.[0] as string;
+    expect(message).not.toContain('_sandbox');
+  });
+});
