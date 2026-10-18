@@ -538,7 +538,7 @@ impl StreamContract {
     /// - `InvalidAmount`       — the batch is empty, or an entry's `amount` ≤ 0.
     /// - `BatchTooLarge`       — the batch exceeds `MAX_BATCH_CREATE` entries.
     /// - `InvalidDuration`     — an entry's `duration` is 0, or its
-    ///   `cliff_duration` is 0 or later than `duration`.
+    ///   `cliff_duration` is later than `duration`.
     /// - `InvalidTokenAddress` — an entry's `token_address` is not a token contract.
     /// - `InvalidRate`         — an entry's post-fee `amount / duration` rounds to zero.
     pub fn batch_create_streams(
@@ -567,7 +567,7 @@ impl StreamContract {
                 return Err(StreamError::InvalidDuration);
             }
             if let Some(cliff) = input.cliff_duration {
-                if cliff == 0 || cliff > input.duration {
+                if cliff > input.duration {
                     return Err(StreamError::InvalidDuration);
                 }
             }
@@ -671,7 +671,7 @@ impl StreamContract {
     /// # Errors
     /// - `ProtocolPaused`      — the circuit breaker is engaged.
     /// - `InvalidAmount`       — `amount` ≤ 0.
-    /// - `InvalidDuration`     — `duration` is 0, or `cliff_duration` is 0 or
+    /// - `InvalidDuration`     — `duration` is 0, or `cliff_duration` is
     ///   later than `duration`.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     /// - `InvalidRate`         — the post-fee `amount / duration` rounds to zero.
@@ -690,7 +690,7 @@ impl StreamContract {
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
         }
-        if duration == 0 || cliff_duration == 0 || cliff_duration > duration {
+        if duration == 0 || cliff_duration > duration {
             return Err(StreamError::InvalidDuration);
         }
         Self::validate_token_contract(&env, &token_address)?;
@@ -1948,7 +1948,7 @@ impl StreamContract {
         // Apply withdrawal: updates state, persists to storage, then transfers (CEI)
         Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
-        let completed = stream.status == StreamStatus::Completed;
+        let completed = stream.is_completed();
 
         emit_tokens_withdrawn(
             &env,
@@ -2185,7 +2185,7 @@ impl StreamContract {
         if stream.is_active {
             return Err(StreamError::StreamStillActive);
         }
-        if stream.status != StreamStatus::Completed && stream.status != StreamStatus::Cancelled {
+        if !stream.is_completed() && !stream.is_cancelled() {
             return Err(StreamError::StreamStillActive);
         }
 
@@ -2193,7 +2193,7 @@ impl StreamContract {
         // (`deposited == withdrawn`, hence claimable == 0). Cancelled streams
         // settled all funds at cancel time (payout + refund), so they are
         // immediately prunable.
-        if stream.status == StreamStatus::Completed {
+        if stream.is_completed() {
             if stream.deposited_amount != stream.withdrawn_amount {
                 return Err(StreamError::StreamStillActive);
             }
@@ -2409,7 +2409,7 @@ impl StreamContract {
             // reverting the batch.
             Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
-            let completed = stream.status == StreamStatus::Completed;
+            let completed = stream.is_completed();
 
             emit_tokens_withdrawn(
                 &env,
@@ -2555,7 +2555,7 @@ impl StreamContract {
     /// Returns `true` if the stream exists and has status `Completed`.
     pub fn is_stream_completed(env: Env, stream_id: u64) -> bool {
         try_load_stream(&env, stream_id)
-            .map(|s| s.status == StreamStatus::Completed)
+            .map(|s| s.is_completed())
             .unwrap_or(false)
     }
 
