@@ -72,7 +72,7 @@ describe("SSEStatusIndicator", () => {
         connected={false}
         reconnecting={false}
         error={new Error("connection refused")}
-        lastEventAt={NOW - 5_000}
+        lastEventAt={NOW - 1_000}
       />
     );
 
