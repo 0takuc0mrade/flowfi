@@ -676,7 +676,7 @@ export interface paths {
         };
         /**
          * Fetch user activity history
-         * @description Returns a paginated chronological history of all stream events associated with the user.
+         * @description Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.
          */
         get: {
             parameters: {
@@ -706,6 +706,24 @@ export interface paths {
                 };
                 /** @description Invalid pagination parameters */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized - missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Forbidden - `publicKey` does not match the authenticated wallet */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
