@@ -62,7 +62,7 @@
 //! shipped behavior. Reads still transitively renew a stream, because the
 //! entrypoints that call them almost always write the record back.
 
-use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val};
+use soroban_sdk::{Address, Env, Map, Symbol, TryFromVal, Val, Vec};
 
 /// Minimum ledgers remaining before a persistent entry is renewed.
 ///
@@ -91,8 +91,8 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 use crate::errors::StreamError;
 use crate::types::{
-    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, ProtocolFeeConfig, StorageKey, Stream,
-    VestingSchedule, StreamPositionMetadata,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, PositionRole, ProtocolConfig,
+    ProtocolFeeConfig, StorageKey, Stream, StreamPositionMetadata, VestingSchedule,
 };
 
 // ─── Version-Tolerant Decoding ────────────────────────────────────────────────
@@ -438,7 +438,11 @@ pub fn fee_config_exists(env: &Env) -> bool {
 ///
 /// Returns `StreamPositionNotFound` if no position metadata exists for the
 /// given stream and role.
-pub fn try_load_position_metadata(env: &Env, stream_id: u64, role: PositionRole) -> Option<StreamPositionMetadata> {
+pub fn try_load_position_metadata(
+    env: &Env,
+    stream_id: u64,
+    _role: PositionRole,
+) -> Option<StreamPositionMetadata> {
     let key = DataKey::StreamPosition(stream_id);
     let raw: Option<Val> = env.storage().persistent().get(&key);
 
@@ -447,10 +451,10 @@ pub fn try_load_position_metadata(env: &Env, stream_id: u64, role: PositionRole)
     bump_position_ttl(env, &key);
 
     // Decode based on field count - position metadata has 7 fields
-    let field_count = match record_field_count(env, &raw)? {
-        7 => {},
+    match record_field_count(env, &raw)? {
+        7 => {}
         _ => return None,
-    };
+    }
 
     let metadata: StreamPositionMetadata = StreamPositionMetadata::try_from_val(env, &raw).ok()?;
     Some(metadata)
@@ -462,10 +466,10 @@ pub fn try_load_position_metadata(env: &Env, stream_id: u64, role: PositionRole)
 /// this function iterates persistent storage entries matching the owner.
 /// In a production implementation, a secondary index or off-chain indexer
 /// would be used for efficient lookups.
-pub fn try_load_positions_by_owner(env: &Env, owner: Address) -> Vec<StreamPositionMetadata> {
+pub fn try_load_positions_by_owner(env: &Env, _owner: Address) -> Vec<StreamPositionMetadata> {
     // In a production implementation, this would query a secondary index.
     // For now, return an empty vector.
-    Vec::new()
+    Vec::new(env)
 }
 
 /// Persists position metadata for a stream.

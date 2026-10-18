@@ -1,56 +1,100 @@
 // DataLoader batching helpers for GraphQL queries.
+//
+// Each loader collapses the N+1 lookups produced by nested fields into a single
+// indexed SQL query per request (e.g. `WHERE streamId IN (...)`), then hands the
+// results back to the caller in the exact order the keys were requested.
 
-import { Stream, StreamEvent } from "../generated/prisma/index.js";
+import DataLoader from "dataloader";
+import type { PrismaClient, Stream, StreamEvent, TokenRegistry } from "../../generated/prisma/index.js";
 
-// Batch stream lookups into a single SQL WHERE id IN (...)
-export const batchStreamsByIds = async (
+export interface TokenMetadata {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  iconUrl: string | null;
+}
+
+export interface DataLoaders {
+  stream: DataLoader<bigint, Stream | null>;
+  eventsByStream: DataLoader<bigint, StreamEvent[]>;
+  token: DataLoader<string, TokenMetadata | null>;
+}
+
+/**
+ * Batch stream lookups into a single SQL `WHERE streamId IN (...)` query.
+ */
+export async function batchStreamsByIds(
+  prisma: PrismaClient,
   streamIds: readonly bigint[],
-): Promise<Map<bigint, Stream>> => {
-  const ids = Array.from(streamIds);
-  const result = new Map<bigint, Stream>();
+): Promise<(Stream | null)[]> {
+  const rows = await prisma.stream.findMany({
+    where: { streamId: { in: [...streamIds] } },
+  });
+  const byId = new Map<bigint, Stream>(rows.map((row) => [row.streamId, row]));
+  return streamIds.map((id) => byId.get(id) ?? null);
+}
 
-  // In a real implementation, this would query the DB for these stream IDs
-  // For now, return empty results
-  for (const id of ids) {
-    result.set(id, null);
-  }
-
-  return result;
-};
-
-// Group events for multiple streams in a single indexed query
-export const batchEventsByStreamIds = async (
+/**
+ * Group events for multiple streams in a single indexed query, preserving the
+ * requested key order.
+ */
+export async function batchEventsByStreamIds(
+  prisma: PrismaClient,
   streamIds: readonly bigint[],
-): Promise<Map<bigint, StreamEvent[]>> => {
-  const ids = Array.from(streamIds);
-  const result = new Map<bigint, StreamEvent[]>();
-
-  // In a real implementation, this would query events by stream IDs
-  // For now, return empty arrays
-  for (const id of ids) {
-    result.set(id, []);
+): Promise<StreamEvent[][]> {
+  const rows = await prisma.streamEvent.findMany({
+    where: { streamId: { in: [...streamIds] } },
+    orderBy: { timestamp: "desc" },
+  });
+  const byStream = new Map<bigint, StreamEvent[]>();
+  for (const row of rows) {
+    const bucket = byStream.get(row.streamId);
+    if (bucket) {
+      bucket.push(row);
+    } else {
+      byStream.set(row.streamId, [row]);
+    }
   }
+  return streamIds.map((id) => byStream.get(id) ?? []);
+}
 
-  return result;
-};
-
-// In-memory cached token metadata lookups
-export const batchTokensByAddresses = async (
+/**
+ * Resolve token metadata for many contract addresses in one query.
+ */
+export async function batchTokensByAddresses(
+  prisma: PrismaClient,
   addresses: readonly string[],
-): Promise<Map<string, { symbol: string; name: string; decimals: number; iconUrl?: string }>> => {
-  const addrs = Array.from(addresses);
-  const result = new Map<string, { symbol: string; name: string; decimals: number; iconUrl?: string }>();
+): Promise<(TokenMetadata | null)[]> {
+  const rows = await prisma.tokenRegistry.findMany({
+    where: { contractAddress: { in: [...addresses] } },
+  });
+  const byAddress = new Map<string, TokenRegistry>(rows.map((row) => [row.contractAddress, row]));
+  return addresses.map((address) => {
+    const row = byAddress.get(address);
+    return row
+      ? {
+          address: row.contractAddress,
+          symbol: row.symbol,
+          name: row.name,
+          decimals: row.decimals,
+          iconUrl: row.iconUrl,
+        }
+      : null;
+  });
+}
 
-  // In a real implementation, this would query TokenRegistry for these addresses
-  // For now, return cached/default values
-  for (const addr of addrs) {
-    result.set(addr, {
-      symbol: "",
-      name: "",
-      decimals: 6,
-      iconUrl: undefined,
-    });
-  }
-
-  return result;
-};
+/**
+ * Create a per-request set of DataLoaders bound to the given Prisma client.
+ */
+export function createDataLoaders(prisma: PrismaClient): DataLoaders {
+  return {
+    stream: new DataLoader<bigint, Stream | null>((ids) => batchStreamsByIds(prisma, ids)),
+    eventsByStream: new DataLoader<bigint, StreamEvent[]>((ids) =>
+      batchEventsByStreamIds(prisma, ids),
+    ),
+    token: new DataLoader<string, TokenMetadata | null>((addresses) =>
+      batchTokensByAddresses(prisma, addresses),
+    ),
+  };
+}

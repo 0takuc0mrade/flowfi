@@ -159,17 +159,9 @@ app.use("/health", healthRateLimiter, healthRoutes);
 // default. Access control lives in the router (see metrics.routes.ts).
 app.use("/metrics", metricsRoutes);
 
-// GraphQL API endpoint
+// GraphQL API endpoint. GET serves the playground in non-production; POST
+// executes queries/mutations with a per-request DataLoader context.
 app.use("/graphql", graphqlRoutes);
-app.use("/graphql", graphqlPlaygroundRoute);
-
-// GraphiQL playground route (development only)
-function graphqlPlaygroundRoute(_req: Request, res: Response, next: NextFunction) {
-  if (process.env.NODE_ENV === "production") {
-    return next();
-  }
-  res.sendFile("/workspaces/flowfi/backend/src/graphql/playground.html", { root: "." });
-}
 
 /**
  * @openapi

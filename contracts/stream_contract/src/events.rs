@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contracttype, Address, BytesN, Env, String, Symbol};
+
+use crate::types::PositionRole;
 
 // ─── Wire Format ─────────────────────────────────────────────────────────────
 //
@@ -527,8 +529,10 @@ pub fn emit_fee_collected(env: &Env, event: FeeCollectedEvent) {
 /// - `event` — the [`ProtocolFeeCollectedEvent`] payload: stream_id, total fee
 ///   amount, and token address.
 pub fn emit_protocol_fee_collected(env: &Env, event: ProtocolFeeCollectedEvent) {
-    env.events()
-        .publish((Symbol::new(env, "protocol_fee_collected"), event.stream_id), event);
+    env.events().publish(
+        (Symbol::new(env, "protocol_fee_collected"), event.stream_id),
+        event,
+    );
 }
 
 /// Emit an `initialized` event.
@@ -769,6 +773,9 @@ pub fn emit_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
 /// - `event` — the [`StateMigratedEvent`] payload: acting `admin` plus the
 ///   `old_version` and `new_version` schema versions.
 pub fn emit_state_migrated(env: &Env, event: StateMigratedEvent) {
+    env.events()
+        .publish((Symbol::new(env, "state_migrated"),), event);
+}
 
 /// Emitted when a cross-asset withdrawal is executed.
 ///
@@ -799,19 +806,14 @@ pub struct CrossAssetWithdrawalExecutedEvent {
 /// - `event` — the [`CrossAssetWithdrawalExecutedEvent`] payload: stream_id,
 ///   input token, output token, input amount, output amount, rate, deadline,
 ///   and slippage metrics.
-pub fn emit_cross_asset_withdrawal_executed(
-    env: &Env,
-    event: CrossAssetWithdrawalExecutedEvent,
-) {
-    env.events()
-        .publish((
+pub fn emit_cross_asset_withdrawal_executed(env: &Env, event: CrossAssetWithdrawalExecutedEvent) {
+    env.events().publish(
+        (
             Symbol::new(env, "cross_asset_withdrawal_executed"),
             event.stream_id,
         ),
-        event);
-}
-    env.events()
-        .publish((Symbol::new(env, "state_migrated"),), event);
+        event,
+    );
 }
 
 /// Emitted when a stream position metadata is generated.
@@ -871,12 +873,10 @@ pub struct StreamPositionSettledEvent {
 /// - `event` — the [`StreamPositionCreatedEvent`] payload: stream_id, role,
 ///   token_address, rate_per_second, start_time, end_time, and is_transferable.
 pub fn emit_stream_position_created(env: &Env, event: StreamPositionCreatedEvent) {
-    env.events()
-        .publish((
-            Symbol::new(env, "stream_position_created"),
-            event.stream_id,
-        ),
-        event);
+    env.events().publish(
+        (Symbol::new(env, "stream_position_created"), event.stream_id),
+        event,
+    );
 }
 
 /// Emits a `stream_position_updated` event indexed by `stream_id`.
@@ -893,12 +893,10 @@ pub fn emit_stream_position_created(env: &Env, event: StreamPositionCreatedEvent
 /// - `event` — the [`StreamPositionUpdatedEvent`] payload: stream_id, role,
 ///   new token address, new rate, new start/end times, and new transferability.
 pub fn emit_stream_position_updated(env: &Env, event: StreamPositionUpdatedEvent) {
-    env.events()
-        .publish((
-            Symbol::new(env, "stream_position_updated"),
-            event.stream_id,
-        ),
-        event);
+    env.events().publish(
+        (Symbol::new(env, "stream_position_updated"), event.stream_id),
+        event,
+    );
 }
 
 /// Emits a `stream_position_settled` event indexed by `stream_id`.
@@ -915,10 +913,8 @@ pub fn emit_stream_position_updated(env: &Env, event: StreamPositionUpdatedEvent
 /// - `event` — the [`StreamPositionSettledEvent`] payload: stream_id, role,
 ///   status, and timestamp.
 pub fn emit_stream_position_settled(env: &Env, event: StreamPositionSettledEvent) {
-    env.events()
-        .publish((
-            Symbol::new(env, "stream_position_settled"),
-            event.stream_id,
-        ),
-        event);
+    env.events().publish(
+        (Symbol::new(env, "stream_position_settled"), event.stream_id),
+        event,
+    );
 }

@@ -41,42 +41,48 @@ mod property_tests;
 mod test;
 
 use soroban_sdk::{
-    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, Symbol, Vec,
+    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, String, Symbol, Vec,
 };
 
 use errors::StreamError;
 use events::{
-    emit_admin_transferred, emit_contract_upgraded, emit_emergency_guardian_updated,
-    emit_fee_collected, emit_fee_config_updated, emit_fee_collected_event, emit_hybrid_cliff_stream_created,
-    emit_initialized, emit_protocol_pause_status, emit_protocol_paused, emit_state_migrated,
+    emit_admin_transferred, emit_contract_upgraded, emit_cross_asset_withdrawal_executed,
+    emit_emergency_guardian_updated, emit_fee_collected, emit_fee_config_updated,
+    emit_hybrid_cliff_stream_created, emit_initialized, emit_protocol_fee_collected,
+    emit_protocol_pause_status, emit_protocol_paused, emit_state_migrated,
     emit_step_vesting_stream_created, emit_stream_cancelled, emit_stream_closed,
-    emit_stream_completed, emit_stream_created, emit_stream_paused, emit_stream_resumed,
+    emit_stream_completed, emit_stream_created, emit_stream_paused, emit_stream_position_created,
+    emit_stream_position_settled, emit_stream_position_updated, emit_stream_resumed,
     emit_stream_topped_up, emit_tokens_withdrawn, AdminTransferredEvent,
-    AllowanceStreamCreatedEvent, ContractUpgradedEvent, DisputeRequestedEvent,
-    DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
-    HybridCliffStreamCreatedEvent, InitializedEvent, MilestoneConditionUnlockedEvent,
-    ProtocolPauseStatusEvent, RecipientTransferredEvent, StateMigratedEvent,
-    StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
-    StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent,
-    StreamToppedUpEvent, TokensWithdrawnEvent, ProtocolFeeCollectedEvent, CrossAssetWithdrawalExecutedEvent,
+    AllowanceStreamCreatedEvent, ContractUpgradedEvent, CrossAssetWithdrawalExecutedEvent,
+    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
+    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    MilestoneConditionUnlockedEvent, ProtocolFeeCollectedEvent, ProtocolPauseStatusEvent,
+    RecipientTransferredEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
+    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
+    StreamPausedEvent, StreamPositionCreatedEvent, StreamPositionSettledEvent,
+    StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
     load_stream, next_stream_id, remove_stream, save_config, save_contract_version,
-    save_recorded_wasm_hash, save_stream, try_load_config, try_load_stream,
-    try_load_position_metadata, save_position_metadata, try_load_positions_by_owner,
+    save_fee_config, save_position_metadata, save_recorded_wasm_hash, save_stream, try_load_config,
+    try_load_fee_config, try_load_position_metadata, try_load_positions_by_owner, try_load_stream,
 };
 use types::{
-    BatchStreamInput, ConditionalMilestone, DataKey, DisputeStatus, FeeRecipient, PositionRole,
-    ProtocolConfig, ProtocolFeeConfig, Stream, StreamStatus, UnlockCondition, VestingSchedule, VestingStep,
-    MAX_BATCH_CREATE, MAX_BATCH_WITHDRAW, MAX_CONDITIONAL_MILESTONES, MAX_VESTING_STEPS,
-    ORACLE_PRICE_MAX_AGE_SECS,
-    StreamPositionMetadata,
-    DexRouter,
+    BatchStreamInput, ConditionalMilestone, DataKey, DexRouter, DisputeStatus, FeeRecipient,
+    OracleAsset, OracleClient, PositionRole, ProtocolConfig, ProtocolFeeConfig, Stream,
+    StreamPositionMetadata, StreamStatus, UnlockCondition, VestingSchedule, VestingStep,
+    MAX_ALLOWED_FEE_BPS, MAX_BATCH_CREATE, MAX_BATCH_WITHDRAW, MAX_CONDITIONAL_MILESTONES,
+    MAX_VESTING_STEPS, ORACLE_PRICE_MAX_AGE_SECS,
 };
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
+
+/// Resolved fee split: a list of `(recipient, amount)` pairs to pay out.
+type FeeRecipients = Vec<(Address, i128)>;
 
 /// Current on-chain state schema version.
 ///
@@ -171,7 +177,7 @@ impl StreamContract {
             return Err(StreamError::InvalidFeeSplit);
         }
 
-        save_config(
+        save_fee_config(
             &env,
             &ProtocolFeeConfig {
                 fee_bps,
@@ -184,25 +190,12 @@ impl StreamContract {
             &env,
             FeeConfigUpdatedEvent {
                 admin,
-                old_treasury: config.treasury,
+                old_treasury: config.treasury.clone(),
                 new_treasury: config.treasury,
                 old_fee_rate_bps: config.fee_rate_bps,
                 new_fee_rate_bps: fee_bps,
             },
         );
-
-        // Also emit the new protocol fee collected event if enabled
-        if is_enabled {
-            emit_fee_collected_event(
-                &env,
-                ProtocolFeeCollectedEvent {
-                    stream_id: 0, // Will be set per-stream
-                    treasury: config.treasury.clone(),
-                    fee_amount: 0, // Will be set per-occurrence
-                    token: config.treasury.clone(),
-                },
-            );
-        }
 
         Ok(())
     }
@@ -470,7 +463,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Deduct protocol fee; returns net amount (== amount when no fee config).
-        let (net_amount, total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, _total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
 
         let rate_per_second = net_amount / (duration as i128);
 
@@ -510,59 +503,6 @@ impl StreamContract {
 
         // Transfer protocol fees to configured recipients.
         Self::transfer_fee(&env, &token_address, stream_id, recipients);
-
-        emit_stream_created(
-            &env,
-            StreamCreatedEvent {
-                stream_id,
-                sender,
-                recipient,
-                rate_per_second,
-                token_address,
-                deposited_amount: net_amount,
-                start_time,
-            },
-        );
-
-        Ok(stream_id)
-    }
-        let rate_per_second = net_amount / (duration as i128);
-
-        // Reject streams where integer division rounds the rate to zero.
-        // Such a stream would lock the sender's tokens in the contract while
-        // never accruing anything to the recipient — almost always a caller
-        // mistake (wrong decimals or an excessively long duration).
-        // Soroban rolls back the entire transaction on Err, so the token
-        // transfer above is unwound automatically.
-        if rate_per_second == 0 {
-            return Err(StreamError::InvalidRate);
-        }
-
-        save_stream(
-            &env,
-            stream_id,
-            &Stream {
-                sender: sender.clone(),
-                recipient: recipient.clone(),
-                token_address: token_address.clone(),
-                rate_per_second,
-                deposited_amount: net_amount,
-                withdrawn_amount: 0,
-                start_time,
-                last_update_time: start_time,
-                cliff_time: None,
-                is_active: true,
-                paused: false,
-                paused_at: None,
-                status: StreamStatus::Active,
-                schedule: VestingSchedule::Linear,
-                arbiter: None,
-                dispute_status: DisputeStatus::None,
-                is_allowance_based: false,
-            },
-        );
-
-        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
 
         emit_stream_created(
             &env,
@@ -664,7 +604,7 @@ impl StreamContract {
         for input in streams.iter() {
             let stream_id = next_stream_id(&env);
             let start_time = env.ledger().timestamp();
-            let (net_amount, total_fee, recipients) =
+            let (net_amount, _total_fee, recipients) =
                 Self::collect_fee(&env, &input.token_address, input.amount)?;
             let rate_per_second = net_amount / input.duration as i128;
             if rate_per_second == 0 {
@@ -717,7 +657,7 @@ impl StreamContract {
 
         Ok(ids)
     }
-/// Create a linear stream that unlocks nothing until `cliff_duration` seconds
+    /// Create a linear stream that unlocks nothing until `cliff_duration` seconds
     /// have passed.
     ///
     /// Accrual runs from `start_time` exactly as in `create_stream`; the cliff
@@ -759,7 +699,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, _total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
 
         let rate_per_second = net_amount / duration as i128;
         if rate_per_second == 0 {
@@ -897,12 +837,13 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
     /// - `PositionNotFound` — no position metadata exists for the given stream and role.
-    pub fn get_position_metadata(        env: Env,
+    pub fn get_position_metadata(
+        env: Env,
         stream_id: u64,
         role: PositionRole,
     ) -> Result<StreamPositionMetadata, StreamError> {
-        let metadata = try_load_position_metadata(&env, stream_id, role)
-            .ok_or(StreamError::StreamNotFound)?;
+        let metadata =
+            try_load_position_metadata(&env, stream_id, role).ok_or(StreamError::StreamNotFound)?;
 
         if metadata.stream_id != stream_id {
             return Err(StreamError::StreamNotFound);
@@ -915,7 +856,8 @@ impl StreamContract {
     ///
     /// # Errors
     /// - `StreamNotFound` — no stream exists with the given owner's positions.
-    pub fn get_positions_by_owner(        env: Env,
+    pub fn get_positions_by_owner(
+        env: Env,
         owner: Address,
     ) -> Result<Vec<StreamPositionMetadata>, StreamError> {
         let positions = try_load_positions_by_owner(&env, owner);
@@ -935,7 +877,8 @@ impl StreamContract {
     ///
     /// # Errors
     /// - `AlreadyInitialized` — position metadata already exists for this stream.
-    pub fn mint_stream_position(        env: Env,
+    pub fn mint_stream_position(
+        env: Env,
         stream_id: u64,
         sender: Address,
         recipient: Address,
@@ -946,11 +889,14 @@ impl StreamContract {
         is_transferable: bool,
     ) -> Result<(), StreamError> {
         // Check if position already exists
-        let _ = Self::get_position_metadata(env.clone(), stream_id, PositionRole::Sender)?;
-        let _ = Self::get_position_metadata(env.clone(), stream_id, PositionRole::Recipient)?;
+        if try_load_position_metadata(&env, stream_id, PositionRole::Sender).is_some()
+            || try_load_position_metadata(&env, stream_id, PositionRole::Recipient).is_some()
+        {
+            return Err(StreamError::AlreadyInitialized);
+        }
 
         // Emit creation events for both sender and recipient positions
-        Self::emit_stream_position_created(
+        emit_stream_position_created(
             &env,
             StreamPositionCreatedEvent {
                 stream_id,
@@ -963,7 +909,7 @@ impl StreamContract {
             },
         );
 
-        Self::emit_stream_position_created(
+        emit_stream_position_created(
             &env,
             StreamPositionCreatedEvent {
                 stream_id,
@@ -1011,14 +957,15 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
     /// - `Unauthorized` — caller is not the current recipient.
-    pub fn update_position_on_transfer(        env: Env,
+    pub fn update_position_on_transfer(
+        env: Env,
         stream_id: u64,
         current_recipient: Address,
         new_recipient: Address,
     ) -> Result<(), StreamError> {
         current_recipient.require_auth();
 
-        let mut stream = load_stream(&env, stream_id)?;
+        let stream = load_stream(&env, stream_id)?;
         if stream.recipient != current_recipient {
             return Err(StreamError::Unauthorized);
         }
@@ -1027,14 +974,14 @@ impl StreamContract {
         // Update recipient position metadata
         let position_key = DataKey::StreamPosition(stream_id);
         if env.storage().persistent().has(&position_key) {
-            let mut position =
-                StreamPositionMetadata::try_from_val(&env, &env.storage().persistent().get(&position_key).unwrap()).unwrap();
+            let mut position: StreamPositionMetadata =
+                env.storage().persistent().get(&position_key).unwrap();
 
             if position.role == PositionRole::Recipient {
                 position.token_address = new_recipient.clone();
                 save_position_metadata(&env, &position);
 
-                Self::emit_stream_position_updated(
+                emit_stream_position_updated(
                     &env,
                     StreamPositionUpdatedEvent {
                         stream_id,
@@ -1057,21 +1004,22 @@ impl StreamContract {
     ///
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
-    pub fn update_position_on_complete(        env: Env,
+    pub fn update_position_on_complete(
+        env: Env,
         stream_id: u64,
         role: PositionRole,
         status: String,
     ) -> Result<(), StreamError> {
-        let metadata = Self::get_position_metadata(env.clone(), stream_id, role)?;
+        let metadata = Self::get_position_metadata(env.clone(), stream_id, role.clone())?;
 
         // Update position metadata in storage
-        let mut updated_metadata = metadata.clone();
+        let updated_metadata = metadata.clone();
         // Note: StreamPositionMetadata doesn't have a status field in this
         // implementation; the status is tracked externally via stream state.
 
         save_position_metadata(&env, &updated_metadata);
 
-        Self::emit_stream_position_settled(
+        emit_stream_position_settled(
             &env,
             StreamPositionSettledEvent {
                 stream_id,
@@ -1081,14 +1029,6 @@ impl StreamContract {
             },
         );
 
-        Ok(())
-    }
-
-    /// Validates that a stream is active (not cancelled or fully withdrawn).
-    fn validate_stream_active(stream: &Stream) -> Result<(), StreamError> {
-        if stream.status == StreamStatus::Cancelled || stream.status == StreamStatus::Completed {
-            return Err(StreamError::StreamInactive);
-        }
         Ok(())
     }
 
@@ -1152,7 +1092,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, _total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
 
         // Structural validation. Runs *after* the transfer so that the real
         // net amount is known, but a returned Err rolls the whole transaction
@@ -1432,7 +1372,7 @@ impl StreamContract {
         // Deduct protocol fee; returns net amount (== amount when no fee config).
         // The fee transfer itself is deferred until the stream is persisted,
         // mirroring the creation flow used by the other stream types.
-        let (net_amount, total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, _total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
 
         Self::validate_conditional_milestones(&milestones, net_amount)?;
 
@@ -1685,7 +1625,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Collect protocol fee and get net amount
-        let (net_amount, total_fee, recipients) =
+        let (net_amount, _total_fee, recipients) =
             Self::collect_fee(&env, &stream.token_address, amount)?;
 
         // Update stream state. `last_update_time` is intentionally left untouched:
@@ -2045,7 +1985,64 @@ impl StreamContract {
     /// - `Unauthorized`    — caller is not the stream's sender.
     /// - `StreamInactive`  — stream is already inactive.
     pub fn cancel_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
+        sender.require_auth();
 
+        let mut stream = load_stream(&env, stream_id)?;
+
+        // Validate ownership and active status
+        Self::validate_stream_ownership(&stream, &sender)?;
+        Self::validate_stream_active(&stream)?;
+
+        let now = env.ledger().timestamp();
+        let accrued_amount = Self::calculate_claimable(&stream, now);
+
+        // Effects: update all stream state before any external call
+        if accrued_amount > 0 {
+            stream.withdrawn_amount = stream.withdrawn_amount.saturating_add(accrued_amount);
+        }
+
+        let refunded_amount = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
+
+        stream.is_active = false;
+        stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
+        stream.last_update_time = now;
+
+        let recipient = stream.recipient.clone();
+        let amount_withdrawn = stream.withdrawn_amount;
+
+        // Persist state before any external calls (CEI)
+        save_stream(&env, stream_id, &stream);
+
+        // Interactions: token transfers after state is committed to storage
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+
+        if accrued_amount > 0 {
+            token_client.transfer(&contract_address, &recipient, &accrued_amount);
+        }
+
+        if refunded_amount > 0 {
+            token_client.transfer(&contract_address, &sender, &refunded_amount);
+        }
+
+        // Emit cancellation event
+        emit_stream_cancelled(
+            &env,
+            StreamCancelledEvent {
+                stream_id,
+                sender,
+                recipient,
+                amount_withdrawn,
+                refunded_amount,
+            },
+        );
+
+        Ok(())
+    }
 
     /// Withdraw and swap stream tokens into an alternative token via a DEX router.
     ///
@@ -2110,16 +2107,15 @@ impl StreamContract {
 
         // Execute the swap with slippage guard
         let amounts = router_client.swap_exact_tokens_for_tokens(
-            &env,
-            claimable,  // amount_in: the claimable amount
-            min_target_amount,  // amount_out_min: slippage guard
-            path,
-            recipient,  // to: recipient address
-            deadline,
+            &claimable,         // amount_in: the claimable amount
+            &min_target_amount, // amount_out_min: slippage guard
+            &path,
+            &recipient, // to: recipient address
+            &deadline,
         );
 
         // The last amount in the array is the actual output amount
-        let output_amount = amounts.last().copied().unwrap_or(0);
+        let output_amount = amounts.last().unwrap_or(0);
 
         if output_amount < min_target_amount {
             // Revert: we need to refund the withdrawn amount
@@ -2143,64 +2139,6 @@ impl StreamContract {
         );
 
         Ok(output_amount)
-    }
-        sender.require_auth();
-
-        let mut stream = load_stream(&env, stream_id)?;
-
-        // Validate ownership and active status
-        Self::validate_stream_ownership(&stream, &sender)?;
-        Self::validate_stream_active(&stream)?;
-
-        let now = env.ledger().timestamp();
-        let accrued_amount = Self::calculate_claimable(&stream, now);
-
-        // Effects: update all stream state before any external call
-        if accrued_amount > 0 {
-            stream.withdrawn_amount = stream.withdrawn_amount.saturating_add(accrued_amount);
-        }
-
-        let refunded_amount = stream
-            .deposited_amount
-            .saturating_sub(stream.withdrawn_amount);
-
-        stream.is_active = false;
-        stream.status = StreamStatus::Cancelled;
-        stream.paused = false;
-        stream.paused_at = None;
-        stream.last_update_time = now;
-
-        let recipient = stream.recipient.clone();
-        let amount_withdrawn = stream.withdrawn_amount;
-
-        // Persist state before any external calls (CEI)
-        save_stream(&env, stream_id, &stream);
-
-        // Interactions: token transfers after state is committed to storage
-        let token_client = token::Client::new(&env, &stream.token_address);
-        let contract_address = env.current_contract_address();
-
-        if accrued_amount > 0 {
-            token_client.transfer(&contract_address, &recipient, &accrued_amount);
-        }
-
-        if refunded_amount > 0 {
-            token_client.transfer(&contract_address, &sender, &refunded_amount);
-        }
-
-        // Emit cancellation event
-        emit_stream_cancelled(
-            &env,
-            StreamCancelledEvent {
-                stream_id,
-                sender,
-                recipient,
-                amount_withdrawn,
-                refunded_amount,
-            },
-        );
-
-        Ok(())
     }
 
     /// Permanently prune a fully settled stream's storage entry.
@@ -2964,7 +2902,7 @@ impl StreamContract {
         env: &Env,
         token_address: &Address,
         amount: i128,
-    ) -> Result<(i128, i128, Vec<(Address, i128)>), StreamError> {
+    ) -> Result<(i128, i128, FeeRecipients), StreamError> {
         // Try new ProtocolFeeConfig first (multi-recipient splits)
         if let Some(fee_cfg) = try_load_fee_config(env) {
             if fee_cfg.is_enabled && fee_cfg.fee_bps > 0 {
@@ -2974,7 +2912,7 @@ impl StreamContract {
                     .ok_or(StreamError::ArithmeticOverflow)?
                     / 10_000;
 
-                let mut recipients: Vec<(Address, i128)> = Vec::new(&env);
+                let mut recipients: FeeRecipients = Vec::new(env);
 
                 // Distribute to each split recipient
                 for split in fee_cfg.splits.iter() {
@@ -2991,14 +2929,11 @@ impl StreamContract {
                 Ok((net_amount, total_fee, recipients))
             } else {
                 // Fee config exists but is not enabled or fee is 0
-                Ok((amount, 0, Vec::new(&env)))
-            } else {
-                // Fall back to legacy ProtocolConfig
-                fallback_collect_fee(env, token_address, amount)
+                Ok((amount, 0, Vec::new(env)))
             }
         } else {
             // No new fee config, fall back to legacy ProtocolConfig
-            fallback_collect_fee(env, token_address, amount)
+            Self::fallback_collect_fee(env, token_address, amount)
         }
     }
 
@@ -3007,7 +2942,7 @@ impl StreamContract {
         env: &Env,
         _token_address: &Address,
         amount: i128,
-    ) -> Result<(i128, i128, Vec<(Address, i128)>), StreamError> {
+    ) -> Result<(i128, i128, FeeRecipients), StreamError> {
         match try_load_config(env) {
             Some(cfg) if cfg.fee_rate_bps > 0 => {
                 let fee = amount
@@ -3017,13 +2952,13 @@ impl StreamContract {
                 let treasury = (fee > 0).then_some(cfg.treasury.clone());
                 let net_amount = amount.saturating_sub(fee);
                 // Single treasury recipient
-                let mut recipients: Vec<(Address, i128)> = Vec::new(&env);
+                let mut recipients: FeeRecipients = Vec::new(env);
                 if let Some(treasury) = treasury {
                     recipients.push_back((treasury, fee));
                 }
                 Ok((net_amount, fee, recipients))
             }
-            _ => Ok((amount, 0, Vec::new(&env))),
+            _ => Ok((amount, 0, Vec::new(env))),
         }
     }
 
@@ -3032,23 +2967,40 @@ impl StreamContract {
     ///
     /// Supports both the legacy single-treasury transfer and the new multi-recipient
     /// split distribution.
-    fn transfer_fee(
-        env: &Env,
-        token_address: &Address,
-        stream_id: u64,
-        recipients: Vec<(Address, i128)>,
-    ) {
+    fn transfer_fee(env: &Env, token_address: &Address, stream_id: u64, recipients: FeeRecipients) {
         let token_client = token::Client::new(env, token_address);
+        // A single recipient is the legacy treasury path; remember it so the
+        // historical `fee_collected` event shape (consumed by older indexers)
+        // is preserved. Multi-recipient splits emit `protocol_fee_collected`.
+        let single_treasury = if recipients.len() == 1 {
+            recipients.get(0).map(|(treasury, _)| treasury)
+        } else {
+            None
+        };
+
         let mut total_fee: i128 = 0;
-        for (recipient, amount) in recipients {
+        for (recipient, amount) in recipients.iter() {
             if amount > 0 {
                 token_client.transfer(&env.current_contract_address(), &recipient, &amount);
                 total_fee = total_fee.saturating_add(amount);
             }
         }
 
-        if total_fee > 0 {
-            emit_protocol_fee_collected(
+        if total_fee == 0 {
+            return;
+        }
+
+        match single_treasury {
+            Some(treasury) => emit_fee_collected(
+                env,
+                FeeCollectedEvent {
+                    stream_id,
+                    treasury,
+                    fee_amount: total_fee,
+                    token: token_address.clone(),
+                },
+            ),
+            None => emit_protocol_fee_collected(
                 env,
                 ProtocolFeeCollectedEvent {
                     stream_id,
@@ -3056,7 +3008,7 @@ impl StreamContract {
                     fee_amount: total_fee,
                     token: token_address.clone(),
                 },
-            );
+            ),
         }
     }
 }

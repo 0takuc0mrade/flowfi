@@ -118,6 +118,8 @@ pub enum StreamError {
     InvalidFeeSplit = 46,
     /// The deadline has expired for a cross-asset withdrawal.
     DeadlineExpired = 47,
+    /// The DEX swap returned less than the caller's minimum output amount.
+    InsufficientOutput = 48,
 }
 
 impl StreamError {
@@ -190,10 +192,12 @@ pub(crate) mod test_diagnostics {
                 StreamError::MilestoneAlreadyUnlocked => "MilestoneAlreadyUnlocked",
                 StreamError::InvalidAttestation => "InvalidAttestation",
                 StreamError::MilestoneCallerUnauthorized => "MilestoneCallerUnauthorized",
-StreamError::TooManyMilestones => "TooManyMilestones",
-            StreamError::FeeExceedsMaximum => "FeeExceedsMaximum",
-            StreamError::InvalidFeeSplit => "InvalidFeeSplit",
-        }
+                StreamError::TooManyMilestones => "TooManyMilestones",
+                StreamError::FeeExceedsMaximum => "FeeExceedsMaximum",
+                StreamError::InvalidFeeSplit => "InvalidFeeSplit",
+                StreamError::DeadlineExpired => "DeadlineExpired",
+                StreamError::InsufficientOutput => "InsufficientOutput",
+            }
         }
     }
 
@@ -264,7 +268,7 @@ StreamError::TooManyMilestones => "TooManyMilestones",
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 31] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 33] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -320,11 +324,16 @@ StreamError::TooManyMilestones => "TooManyMilestones",
             ),
             (StreamError::StateVersionTooNew, "StateVersionTooNew", 26),
             (StreamError::TopUpUnsupported, "TopUpUnsupported", 27),
-            (StreamError::RateModificationUnsupported, "RateModificationUnsupported", 28),
+            (
+                StreamError::RateModificationUnsupported,
+                "RateModificationUnsupported",
+                28,
+            ),
             (StreamError::InvalidNewRate, "InvalidNewRate", 29),
             (StreamError::FeeExceedsMaximum, "FeeExceedsMaximum", 45),
             (StreamError::InvalidFeeSplit, "InvalidFeeSplit", 46),
             (StreamError::DeadlineExpired, "DeadlineExpired", 47),
+            (StreamError::InsufficientOutput, "InsufficientOutput", 48),
         ];
 
         #[test]

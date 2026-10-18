@@ -9,10 +9,22 @@ use soroban_sdk::{contractclient, contracttype, Address, BytesN, Env, Vec};
 /// contracttype so the generated invocation matches oracle deployments
 /// without pulling SDK type differences into our ABI.
 // The trait itself is never implemented or named directly — `#[contractclient]`
+// consumes it to generate `OracleClient`, which lib.rs invokes. rustc's
+// dead-code pass doesn't credit that generated usage, so silence the lint.
+#[allow(dead_code)]
+#[contractclient(name = "OracleClient")]
+pub trait PriceOracle {
+    /// Last recorded price for `asset`, or `None` when the oracle has none.
+    fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
+}
 
+/// Stellar DEX router interface used by `withdraw_and_swap` (#1466).
+///
+/// `#[contractclient]` generates [`DexRouter`], the cross-contract client the
+/// contract invokes to swap a stream's principal token for a target asset.
 #[allow(dead_code)]
 #[contractclient(name = "DexRouter")]
-pub trait DexRouter {
+pub trait DexRouterInterface {
     fn swap_exact_tokens_for_tokens(
         env: Env,
         amount_in: i128,
@@ -21,15 +33,6 @@ pub trait DexRouter {
         to: Address,
         deadline: u64,
     ) -> Vec<i128>;
-}
-
-// consumes it to generate `OracleClient`, which lib.rs invokes. rustc's
-// dead-code pass doesn't credit that generated usage, so silence the lint.
-#[allow(dead_code)]
-#[contractclient(name = "OracleClient")]
-pub trait PriceOracle {
-    /// Last recorded price for `asset`, or `None` when the oracle has none.
-    fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
 }
 
 /// Asset identifier passed to [`PriceOracle::lastprice`] (#1482).
