@@ -1,7 +1,18 @@
 import { z } from 'zod';
 import { parseStreamId } from '../lib/stream-id.js';
 
-const MAX_I128 = BigInt('170141183460469231731687303715884105727');
+/** Soroban `i128` upper bound (2^127 - 1). Values above this overflow the
+ * on-chain type and the Postgres i128 columns, so they must never pass
+ * request validation. */
+export const MAX_I128 = BigInt('170141183460469231731687303715884105727');
+
+function isAtMostI128(val: string): boolean {
+  try {
+    return BigInt(val) <= MAX_I128;
+  } catch {
+    return true;
+  }
+}
 
 export const createStreamSchema = z.object({
   streamId: z
@@ -23,17 +34,11 @@ export const createStreamSchema = z.object({
   ratePerSecond: z
     .string()
     .regex(/^\d+$/, 'Rate must be a positive integer as string')
-    .refine(
-      (val) => {
-        try {
-          return BigInt(val) <= MAX_I128;
-        } catch {
-          return true;
-        }
-      },
-      { message: 'Rate exceeds maximum allowed value' },
-    ),
-  depositedAmount: z.string().regex(/^\d+$/, 'Amount must be a positive integer as string'),
+    .refine(isAtMostI128, { message: 'Rate exceeds maximum allowed value' }),
+  depositedAmount: z
+    .string()
+    .regex(/^\d+$/, 'Amount must be a positive integer as string')
+    .refine(isAtMostI128, { message: 'Amount exceeds maximum allowed value' }),
   startTime: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform(v => parseInt(v))]),
 });
 

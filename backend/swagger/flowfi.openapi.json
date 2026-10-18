@@ -1544,7 +1544,12 @@
           "Users"
         ],
         "summary": "Fetch user activity history",
-        "description": "Returns a paginated chronological history of all stream events associated with the user.",
+        "description": "Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "in": "path",
@@ -1588,6 +1593,26 @@
           },
           "400": {
             "description": "Invalid pagination parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - `publicKey` does not match the authenticated wallet",
             "content": {
               "application/json": {
                 "schema": {
