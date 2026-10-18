@@ -207,8 +207,10 @@ export class ToxiproxyClient {
     );
   }
 
-  listProxies(): Promise<ToxiproxyProxy[]> {
-    return this.request<ToxiproxyProxy[]>('/proxies');
+  async listProxies(): Promise<ToxiproxyProxy[]> {
+    const raw = await this.request<unknown>('/proxies', { timeoutMs: 3_000 });
+    if (!Array.isArray(raw)) return [];
+    return raw as ToxiproxyProxy[];
   }
 
   createProxy(proxy: ToxiproxyProxy): Promise<ToxiproxyProxy> {
@@ -240,11 +242,16 @@ export class ToxiproxyClient {
 
   /** Idempotently ensure the three FlowFi proxies exist. */
   async ensureProxies(): Promise<void> {
-    const existing = new Set((await this.listProxies()).map((p) => p.name));
+    // Delete any proxies with these names first, so we can create them fresh.
     for (const proxy of Object.values(CHAOS_PROXIES)) {
-      if (!existing.has(proxy.name)) {
-        await this.createProxy({ ...proxy });
+      try {
+        await this.deleteProxy(proxy.name);
+      } catch {
+        // may not exist yet — that's fine
       }
+    }
+    for (const proxy of Object.values(CHAOS_PROXIES)) {
+      await this.createProxy({ ...proxy }).catch(() => {/* proxy may have been created in the delete loop above */});
     }
   }
 }

@@ -90,9 +90,3 @@ services:
         condition: service_healthy
       mock-soroban-rpc:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8474/proxies"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
