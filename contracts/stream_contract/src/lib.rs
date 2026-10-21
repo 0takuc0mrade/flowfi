@@ -62,8 +62,8 @@ use events::{
     RecipientTransferredEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
     StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
     StreamPausedEvent, StreamPositionCreatedEvent, StreamPositionSettledEvent,
-    StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamRefueledEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
@@ -1735,7 +1735,7 @@ impl StreamContract {
         token_client.transfer(&funder, &contract_address, &amount);
 
         // Deduct protocol fee; returns net amount (== amount when fee_rate_bps == 0).
-        let (net_amount, fee_amount, treasury) =
+        let (net_amount, _total_fee, recipients) =
             Self::collect_fee(&env, &stream.token_address, amount)?;
 
         // Extend deposited balance. `last_update_time` is intentionally left
@@ -1756,7 +1756,7 @@ impl StreamContract {
 
         save_stream(&env, stream_id, &stream);
 
-        Self::transfer_fee(&env, &stream.token_address, stream_id, fee_amount, treasury);
+        Self::transfer_fee(&env, &stream.token_address, stream_id, recipients);
 
         env.events().publish(
             (Symbol::new(&env, "stream_refueled"), stream_id),
